@@ -36,7 +36,7 @@ public class DailyEntriesController : ControllerBase
         if (!await _households.IsMemberAsync(householdId, User.GetUserId())) return NotFound();
 
         var from = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Utc);
-        var to = from.AddMonths(1).AddTicks(-1);
+        var to = from.AddMonths(1);
         return Ok(await _entries.MonthlyTotalsAsync(householdId, from, to));
     }
 
@@ -62,8 +62,15 @@ public class DailyEntriesController : ControllerBase
         var entry = await _entries.GetByIdAsync(id);
         if (entry is null || !await _households.IsMemberAsync(entry.HouseholdId, User.GetUserId())) return NotFound();
 
-        var updated = await _entries.UpdateAsync(id, req.Quantity, req.Note);
-        return updated ? NoContent() : NotFound();
+        try
+        {
+            var updated = await _entries.UpdateAsync(id, req);
+            return updated ? NoContent() : NotFound();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
     }
 
     [HttpDelete("api/entries/{id}")]

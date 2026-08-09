@@ -24,7 +24,7 @@ public sealed class DailyEntryService
 
     public async Task<List<DailyEntry>> ListAsync(
         string householdId, DateTime from, DateTime to, CancellationToken ct = default) =>
-        await _entries.Find(x => x.HouseholdId == householdId && x.Date >= from && x.Date <= to)
+        await _entries.Find(x => x.HouseholdId == householdId && x.Date >= from && x.Date < to)
             .SortByDescending(x => x.Date).ToListAsync(ct);
 
     public async Task<DailyEntry?> GetByIdAsync(string id, CancellationToken ct = default) =>
@@ -34,14 +34,21 @@ public sealed class DailyEntryService
     {
         var vendor = await _vendors.GetByIdAsync(req.VendorId, ct)
             ?? throw new InvalidOperationException("Vendor not found.");
+        var ratePerUnit = req.RatePerUnit ?? vendor.RatePerUnit;
+        if (req.Quantity <= 0) throw new InvalidOperationException("Quantity must be greater than zero.");
+        if (ratePerUnit < 0) throw new InvalidOperationException("Rate cannot be negative.");
+        if (req.PaidAmount < 0) throw new InvalidOperationException("Paid amount cannot be negative.");
 
         var entry = new DailyEntry
         {
             HouseholdId = householdId,
             VendorId = req.VendorId,
-            Date = req.Date.Date,
+            Date = req.Date.ToUniversalTime(),
+            Period = NormalizePeriod(req.Period),
             Quantity = req.Quantity,
-            Amount = req.Quantity * vendor.RatePerUnit,
+            RatePerUnit = ratePerUnit,
+            Amount = req.Quantity * ratePerUnit,
+            PaidAmount = req.PaidAmount,
             Note = req.Note,
             CreatedAt = DateTime.UtcNow,
         };
@@ -49,18 +56,22 @@ public sealed class DailyEntryService
         return entry;
     }
 
-    public async Task<bool> UpdateAsync(string id, decimal quantity, string? note, CancellationToken ct = default)
+    public async Task<bool> UpdateAsync(string id, UpdateDailyEntryRequest req, CancellationToken ct = default)
     {
         var existing = await GetByIdAsync(id, ct);
         if (existing is null) return false;
-
-        var vendor = await _vendors.GetByIdAsync(existing.VendorId, ct);
-        var amount = vendor is null ? existing.Amount : quantity * vendor.RatePerUnit;
+        if (req.Quantity <= 0) throw new InvalidOperationException("Quantity must be greater than zero.");
+        if (req.RatePerUnit < 0) throw new InvalidOperationException("Rate cannot be negative.");
+        if (req.PaidAmount < 0) throw new InvalidOperationException("Paid amount cannot be negative.");
 
         var update = Builders<DailyEntry>.Update
-            .Set(x => x.Quantity, quantity)
-            .Set(x => x.Amount, amount)
-            .Set(x => x.Note, note);
+            .Set(x => x.Date, req.Date.ToUniversalTime())
+            .Set(x => x.Period, NormalizePeriod(req.Period))
+            .Set(x => x.Quantity, req.Quantity)
+            .Set(x => x.RatePerUnit, req.RatePerUnit)
+            .Set(x => x.Amount, req.Quantity * req.RatePerUnit)
+            .Set(x => x.PaidAmount, req.PaidAmount)
+            .Set(x => x.Note, req.Note);
         var result = await _entries.UpdateOneAsync(x => x.Id == id, update, cancellationToken: ct);
         return result.IsAcknowledged && result.MatchedCount > 0;
     }
@@ -84,9 +95,19 @@ public sealed class DailyEntryService
             .Select(g => new MonthlyVendorTotal(
                 g.Key,
                 vendorNames.TryGetValue(g.Key, out var name) ? name : "(deleted vendor)",
+                g.Count(),
                 g.Sum(e => e.Quantity),
-                g.Sum(e => e.Amount)))
+                g.Sum(e => e.Amount),
+                g.Sum(e => e.PaidAmount),
+                g.Sum(e => e.Amount - e.PaidAmount)))
             .OrderByDescending(t => t.TotalAmount)
             .ToList();
     }
+
+    private static string NormalizePeriod(string? period) => period?.Trim().ToLowerInvariant() switch
+    {
+        "morning" or "am" => "Morning",
+        "evening" or "pm" => "Evening",
+        _ => "Anytime",
+    };
 }

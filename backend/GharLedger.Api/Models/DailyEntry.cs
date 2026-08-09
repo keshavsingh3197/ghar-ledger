@@ -19,15 +19,24 @@ public class DailyEntry
     [BsonElement("vendorId")]
     public string VendorId { get; set; } = string.Empty;
 
-    /// <summary>Stored as UTC midnight for the calendar day the delivery happened.</summary>
+    /// <summary>UTC timestamp when the delivery happened.</summary>
     [BsonElement("date")]
     public DateTime Date { get; set; }
+
+    [BsonElement("period")]
+    public string Period { get; set; } = "Anytime";
 
     [BsonElement("quantity")]
     public decimal Quantity { get; set; }
 
+    [BsonElement("ratePerUnit")]
+    public decimal RatePerUnit { get; set; }
+
     [BsonElement("amount")]
     public decimal Amount { get; set; }
+
+    [BsonElement("paidAmount")]
+    public decimal PaidAmount { get; set; }
 
     [BsonElement("note")]
     public string? Note { get; set; }
