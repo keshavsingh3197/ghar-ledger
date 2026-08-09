@@ -70,6 +70,7 @@ const categoryKeywords: Record<string, string[]> = {
 export class RecordImportComponent {
   @Input() hasRecords = false;
   @Output() recordsConfirmed = new EventEmitter<CreateHouseholdTransactionRequest[]>();
+  @Output() feedback = new EventEmitter<{ message: string; kind: 'success' | 'error' | 'info' }>();
 
   readonly pending = signal<PendingLedgerRecord[]>([]);
   readonly reading = signal(false);
@@ -89,15 +90,18 @@ export class RecordImportComponent {
       .map((row) => row.map((value) => `"${value.replace(/"/g, '""')}"`).join(','))
       .join('\r\n');
     this.downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), 'ghar-ledger-import-template.csv');
+    this.feedback.emit({ message: 'CSV import format downloaded.', kind: 'success' });
   }
 
   async downloadExcelTemplate(): Promise<void> {
+    this.feedback.emit({ message: 'Preparing Excel import format…', kind: 'info' });
     const XLSX = await import('xlsx');
     const workbook = XLSX.utils.book_new();
     const worksheet = XLSX.utils.json_to_sheet(this.templateRows());
     worksheet['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 20 }, { wch: 12 }, { wch: 18 }, { wch: 36 }];
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Records');
     XLSX.writeFile(workbook, 'ghar-ledger-import-template.xlsx');
+    this.feedback.emit({ message: 'Excel import format downloaded.', kind: 'success' });
   }
 
   async readFile(event: Event): Promise<void> {
@@ -105,6 +109,7 @@ export class RecordImportComponent {
     const file = input.files?.[0];
     input.value = '';
     if (!file) return;
+    this.feedback.emit({ message: `Reading ${file.name}…`, kind: 'info' });
     this.clear();
     this.reading.set(true);
     try {
@@ -112,6 +117,7 @@ export class RecordImportComponent {
       else await this.readWorkbook(file);
     } catch {
       this.error.set('The file could not be read. Try a clearer image or a CSV/Excel file with Date, Type, Category, Amount, Member, and Note columns.');
+      this.feedback.emit({ message: 'The selected file could not be read.', kind: 'error' });
     } finally {
       this.reading.set(false);
     }
@@ -123,6 +129,7 @@ export class RecordImportComponent {
       .map(({ selected: _selected, sourceFile: _sourceFile, ...row }) => ({ ...row, date: new Date(row.date).toISOString() }));
     if (!records.length) return;
     this.recordsConfirmed.emit(records);
+    this.feedback.emit({ message: `${records.length} record${records.length === 1 ? '' : 's'} confirmed. Saving…`, kind: 'info' });
     this.clear();
   }
 
