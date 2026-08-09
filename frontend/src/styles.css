@@ -1,0 +1,22 @@
+* { box-sizing: border-box; }
+
+:root {
+  --font-family: 'Segoe UI', 'Inter', system-ui, -apple-system, sans-serif;
+  --bg: #f4f7fb;
+  --surface: #ffffff;
+  --text: #1d2735;
+  --muted: #5f6c7b;
+  --brand: #1a73e8;
+  --brand-text: #ffffff;
+  --border: #dce3ec;
+  --shadow-sm: 0 2px 8px rgba(19, 35, 58, 0.14);
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-family);
+  background: var(--bg);
+  color: var(--text);
+}
+
+a { color: var(--brand); }

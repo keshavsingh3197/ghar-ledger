@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!--
+      The private KeshavSingh.* feed needs PACKAGES_READ_TOKEN. When it is absent we skip those
+      references so restore can't 401. This deterministically covers GitHub's hosted automatic
+      NuGet dependency submission (which has no access to repo secrets), while the real Docker /
+      Render build — which exports PACKAGES_READ_TOKEN before restore — still includes them.
+    -->
+    <SkipPrivatePackages Condition="'$(PACKAGES_READ_TOKEN)' == ''">true</SkipPrivatePackages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MongoDB.Driver" Version="3.10.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(SkipPrivatePackages)' != 'true'">
+    <!-- Shared JWT options + Mongo access from GitHub Packages. This app is a pure resource server —
+         it validates tokens the identity provider (admin.keshavsingh.in) issues, it never mints them,
+         so it does NOT need KeshavSingh.Auth's login engine (AddKeshavAuthEngine). -->
+    <PackageReference Include="KeshavSingh.Security" Version="0.3.0" />
+    <PackageReference Include="KeshavSingh.Auth" Version="0.5.0" />
+    <PackageReference Include="KeshavSingh.Core" Version="0.3.0" />
+    <PackageReference Include="KeshavSingh.Mongo.NoSql" Version="0.2.0" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(SkipPrivatePackages)' == 'true'">
+    <ProjectReference Include="..\..\..\shared-security\src\KeshavSingh.Security\KeshavSingh.Security.csproj" />
+    <ProjectReference Include="..\..\..\shared-security\src\KeshavSingh.Auth\KeshavSingh.Auth.csproj" />
+    <ProjectReference Include="..\..\..\KeshavSingh-Packages-Core\src\KeshavSingh.Core\KeshavSingh.Core.csproj" />
+    <ProjectReference Include="..\..\..\KeshavSingh-Packages-Nosql\src\KeshavSingh.Mongo.NoSql\KeshavSingh.Mongo.NoSql.csproj" />
+  </ItemGroup>
+
+</Project>
