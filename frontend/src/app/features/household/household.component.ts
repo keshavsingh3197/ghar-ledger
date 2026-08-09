@@ -94,7 +94,7 @@ interface CashflowActivity {
             <label>Note<input class="input" [(ngModel)]="transactionNote" placeholder="Optional" /></label>
           </div>
           <button class="primary" [disabled]="!transactionCategory.trim() || !transactionAmount" (click)="addTransaction()">Add record</button>
-          <app-record-import (recordsConfirmed)="importCashflowRecords($event)" />
+          <app-record-import [hasRecords]="cashflowActivity().length > 0" (recordsConfirmed)="importCashflowRecords($event)" />
           @if (savingImport()) { <div class="loading" role="status"><span class="spinner"></span><span>Saving confirmed records…</span></div> }
         </section>
         <section class="panel">
@@ -120,7 +120,7 @@ interface CashflowActivity {
           }
         </section>
         <section class="panel">
-          <div class="heading"><div><h2>{{ monthLabel() }} entries</h2><p>{{ monthEntries().length }} delivery records</p></div><div class="actions"><input #fileInput hidden type="file" accept=".xlsx,.xls,.csv" (change)="importWorkbook($event)" /><button class="secondary" (click)="fileInput.click()">Import Excel</button><button class="secondary" [disabled]="!monthEntries().length" (click)="exportWorkbook()">Export Excel</button></div></div>
+          <div class="heading"><div><h2>{{ monthLabel() }} entries</h2><p>{{ monthEntries().length }} delivery records</p></div><div class="actions"><input #fileInput hidden type="file" accept=".xlsx,.xls,.csv" (change)="importWorkbook($event)" /><button class="secondary" type="button" (click)="downloadDeliveryTemplate()">Download format</button><button class="secondary" (click)="fileInput.click()">Import Excel</button><button class="secondary" [disabled]="!monthEntries().length" (click)="exportWorkbook()">Export Excel</button></div></div>
           @if (monthLoading() && !monthEntries().length) { <div class="loading" role="status"><span class="spinner"></span><span>Loading deliveries…</span></div> }
           @if (!monthLoading() && !monthEntries().length) { <p class="empty">No deliveries for this month.</p> }
           @if (monthEntries().length) { <div class="scroll"><table><thead><tr><th>Date</th><th>Period</th><th>Vendor</th><th>Qty</th><th>Captured rate</th><th>Charged</th><th>Note</th><th></th></tr></thead><tbody>
@@ -438,6 +438,16 @@ export class HouseholdComponent implements OnInit {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), 'Entries');
     XLSX.writeFile(workbook, `ghar-ledger-${this.selectedMonth}.xlsx`);
+  }
+
+  async downloadDeliveryTemplate() {
+    const XLSX = await import('xlsx');
+    const rows = [{ Vendor: 'Milk vendor', Date: '2026-08-09 07:30', Quantity: 1, Rate: 60, Period: 'Morning', Note: 'Daily milk' }];
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    worksheet['!cols'] = [{ wch: 22 }, { wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 30 }];
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Deliveries');
+    XLSX.writeFile(workbook, 'ghar-ledger-delivery-import-template.xlsx');
   }
 
   async importWorkbook(event: Event) {

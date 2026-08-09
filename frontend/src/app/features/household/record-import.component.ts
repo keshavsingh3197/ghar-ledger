@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, EventEmitter, Output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, EventEmitter, Input, Output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CreateHouseholdTransactionRequest, HouseholdTransactionType } from '../../core/models/household-transaction.models';
 
@@ -23,9 +23,15 @@ const categoryKeywords: Record<string, string[]> = {
   imports: [FormsModule],
   template: `
     <section class="importer">
+      @if (!hasRecords) {
+        <div class="starter">
+          <strong>Start your family diary</strong>
+          <p>No records yet. Add one manually, upload a receipt screenshot, or download the format and fill multiple records.</p>
+        </div>
+      }
       <div class="heading">
         <div><h3>Import records</h3><p>Read a receipt screenshot or import CSV/Excel. Review every row before saving.</p></div>
-        <label class="upload">Choose file<input type="file" accept="image/*,.csv,.xlsx,.xls" (change)="readFile($event)" /></label>
+        <div class="heading-actions"><button class="secondary" type="button" (click)="downloadCsvTemplate()">Download CSV format</button><button class="secondary" type="button" (click)="downloadExcelTemplate()">Download Excel format</button><label class="upload">Choose file<input type="file" accept="image/*,.csv,.xlsx,.xls" (change)="readFile($event)" /></label></div>
       </div>
 
       @if (reading()) {
@@ -58,10 +64,11 @@ const categoryKeywords: Record<string, string[]> = {
     </section>
   `,
   styles: [`
-    .importer{border-top:1px solid var(--border);margin-top:1.2rem;padding-top:1.2rem}.heading,.actions,.loading{display:flex;align-items:center;justify-content:space-between;gap:1rem}.heading h3,.review h3{font-size:.95rem;margin:0}.heading p,.review p{color:var(--muted);font-size:.8rem;margin:.25rem 0}.upload,.primary,.secondary{border-radius:5px;padding:.55rem .8rem;cursor:pointer;font:inherit}.upload{background:var(--brand);color:var(--brand-text);font-size:.82rem;font-weight:600}.upload input{display:none}.loading{justify-content:flex-start;color:var(--muted);font-size:.85rem;padding:1rem 0}.spinner{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--brand);border-radius:50%;animation:spin .8s linear infinite}.error{color:#b42318}.preview{display:block;max-width:260px;max-height:180px;object-fit:contain;margin:1rem 0;border:1px solid var(--border);border-radius:5px}.review{margin-top:1rem;padding:1rem;background:var(--bg);border:1px solid var(--border);border-radius:6px}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;font-size:.8rem}th,td{text-align:left;padding:.5rem;border-bottom:1px solid var(--border);white-space:nowrap}input,select{min-width:120px;padding:.4rem;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text)}input.amount{min-width:90px;width:100px}.actions{justify-content:flex-end;margin-top:1rem}.primary{border:0;background:var(--brand);color:var(--brand-text)}.secondary{border:1px solid var(--border);background:var(--surface);color:var(--text)}button:disabled{opacity:.55;cursor:default}@keyframes spin{to{transform:rotate(360deg)}}
+    .importer{border-top:1px solid var(--border);margin-top:1.2rem;padding-top:1.2rem}.starter{margin-bottom:1rem;padding:.8rem 1rem;border:1px solid var(--border);border-left:3px solid var(--brand);border-radius:5px;background:var(--bg)}.starter strong{font-size:.9rem}.starter p{margin:.3rem 0 0;color:var(--muted);font-size:.8rem}.heading,.heading-actions,.actions,.loading{display:flex;align-items:center;justify-content:space-between;gap:.6rem}.heading-actions{flex-wrap:wrap;justify-content:flex-end}.heading h3,.review h3{font-size:.95rem;margin:0}.heading p,.review p{color:var(--muted);font-size:.8rem;margin:.25rem 0}.upload,.primary,.secondary{border-radius:5px;padding:.55rem .8rem;cursor:pointer;font:inherit;white-space:nowrap}.upload{background:var(--brand);color:var(--brand-text);font-size:.82rem;font-weight:600}.upload input{display:none}.loading{justify-content:flex-start;color:var(--muted);font-size:.85rem;padding:1rem 0}.spinner{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--brand);border-radius:50%;animation:spin .8s linear infinite}.error{color:#b42318}.preview{display:block;max-width:260px;max-height:180px;object-fit:contain;margin:1rem 0;border:1px solid var(--border);border-radius:5px}.review{margin-top:1rem;padding:1rem;background:var(--bg);border:1px solid var(--border);border-radius:6px}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;font-size:.8rem}th,td{text-align:left;padding:.5rem;border-bottom:1px solid var(--border);white-space:nowrap}input,select{min-width:120px;padding:.4rem;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text)}input.amount{min-width:90px;width:100px}.actions{justify-content:flex-end;margin-top:1rem}.primary{border:0;background:var(--brand);color:var(--brand-text)}.secondary{border:1px solid var(--border);background:var(--surface);color:var(--text)}button:disabled{opacity:.55;cursor:default}@media(max-width:760px){.heading{align-items:flex-start;flex-direction:column}.heading-actions{justify-content:flex-start}}@keyframes spin{to{transform:rotate(360deg)}}
   `],
 })
 export class RecordImportComponent {
+  @Input() hasRecords = false;
   @Output() recordsConfirmed = new EventEmitter<CreateHouseholdTransactionRequest[]>();
 
   readonly pending = signal<PendingLedgerRecord[]>([]);
@@ -73,6 +80,24 @@ export class RecordImportComponent {
 
   validCount(): number {
     return this.pending().filter((row) => row.selected && row.amount > 0 && row.category.trim() && !Number.isNaN(new Date(row.date).getTime())).length;
+  }
+
+  downloadCsvTemplate(): void {
+    const rows = this.templateRows();
+    const headers = Object.keys(rows[0]);
+    const csv = [headers, ...rows.map((row) => headers.map((header) => String(row[header as keyof typeof row]))) ]
+      .map((row) => row.map((value) => `"${value.replace(/"/g, '""')}"`).join(','))
+      .join('\r\n');
+    this.downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), 'ghar-ledger-import-template.csv');
+  }
+
+  async downloadExcelTemplate(): Promise<void> {
+    const XLSX = await import('xlsx');
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet(this.templateRows());
+    worksheet['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 20 }, { wch: 12 }, { wch: 18 }, { wch: 36 }];
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Records');
+    XLSX.writeFile(workbook, 'ghar-ledger-import-template.xlsx');
   }
 
   async readFile(event: Event): Promise<void> {
@@ -180,5 +205,21 @@ export class RecordImportComponent {
 
   private localDateTime(date: Date): string {
     return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+  }
+
+  private templateRows(): Record<string, string | number>[] {
+    return [
+      { Date: '2026-08-09 09:30', Type: 'Expense', Category: 'Groceries', Amount: 1250, Member: 'Household', Note: 'Weekly groceries' },
+      { Date: '2026-08-09 10:00', Type: 'Income', Category: 'Salary', Amount: 50000, Member: 'Keshav', Note: 'Monthly salary' },
+    ];
+  }
+
+  private downloadBlob(blob: Blob, fileName: string): void {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.click();
+    URL.revokeObjectURL(url);
   }
 }
