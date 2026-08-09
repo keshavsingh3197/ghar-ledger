@@ -2,10 +2,11 @@ import { CurrencyPipe, DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, OnInit, computed, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import { forkJoin } from 'rxjs';
+import { BrandPaginationComponent } from '@keshavsingh3197/web-ui';
+import { finalize, forkJoin } from 'rxjs';
 import { DailyEntry, DeliveryPeriod, MonthlyVendorTotal } from '../../core/models/daily-entry.models';
 import { Household } from '../../core/models/household.models';
-import { HouseholdCashflowSummary, HouseholdTransaction, HouseholdTransactionType } from '../../core/models/household-transaction.models';
+import { CreateHouseholdTransactionRequest, HouseholdCashflowSummary, HouseholdTransaction, HouseholdTransactionType } from '../../core/models/household-transaction.models';
 import { VendorPayment } from '../../core/models/vendor-payment.models';
 import { Vendor } from '../../core/models/vendor.models';
 import { DailyEntriesService } from '../../core/services/daily-entries.service';
@@ -14,15 +15,27 @@ import { HouseholdTransactionsService } from '../../core/services/household-tran
 import { PreferencesService } from '../../core/services/preferences.service';
 import { VendorPaymentsService } from '../../core/services/vendor-payments.service';
 import { VendorsService } from '../../core/services/vendors.service';
+import { RecordImportComponent } from './record-import.component';
 
 function localDateTime(date = new Date()): string {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 }
 
+interface CashflowActivity {
+  id: string;
+  date: string;
+  type: 'Income' | 'Expense' | 'Vendor payment';
+  category: string;
+  amount: number;
+  memberName?: string | null;
+  note?: string | null;
+  source: 'transaction' | 'vendorPayment';
+}
+
 @Component({
   selector: 'app-household',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [CurrencyPipe, DatePipe, FormsModule, RouterLink],
+  imports: [BrandPaginationComponent, CurrencyPipe, DatePipe, FormsModule, RecordImportComponent, RouterLink],
   template: `
     <div class="household">
       <header>
@@ -44,11 +57,12 @@ function localDateTime(date = new Date()): string {
             <label>To (included)<input class="input" type="date" [(ngModel)]="reportTo" (change)="loadReport()" /></label>
           </div>
         </section>
+        @if (reportLoading() && !monthlyTotals().length) { <div class="loading" role="status"><span class="spinner"></span><span>Loading report…</span></div> }
         <section class="metrics">
-          <article><span>Selected spend</span><strong>{{ grandTotal() | currency:currencyCode() }}</strong></article>
+          <article><span>Vendor charges</span><strong>{{ grandTotal() | currency:currencyCode() }}</strong></article>
           <article><span>Family income</span><strong>{{ cashflowSummary().income | currency:currencyCode() }}</strong></article>
           <article><span>Other expenses</span><strong>{{ cashflowSummary().expenses | currency:currencyCode() }}</strong></article>
-          <article><span>Net left</span><strong>{{ netAfterVendorSpend() | currency:currencyCode() }}</strong></article>
+          <article><span>Net cash left</span><strong>{{ netCashLeft() | currency:currencyCode() }}</strong></article>
         </section>
         <section class="panel">
           <div class="heading"><div><h2>Spend by vendor</h2><p>{{ reportFrom }} to {{ reportTo }}, inclusive</p></div></div>
@@ -66,22 +80,28 @@ function localDateTime(date = new Date()): string {
 
       @if (activeTab() === 'cashflow') {
         <section class="panel">
-          <div class="heading"><div><h2>Family cashflow</h2><p>Income and daily spending for {{ reportFrom }} to {{ reportTo }}.</p></div></div>
-          <section class="metrics cashflow-metrics"><article><span>Income</span><strong>{{ cashflowSummary().income | currency:currencyCode() }}</strong></article><article><span>Daily expenses</span><strong>{{ cashflowSummary().expenses | currency:currencyCode() }}</strong></article><article><span>Vendor spend</span><strong>{{ grandTotal() | currency:currencyCode() }}</strong></article><article><span>Net left</span><strong>{{ netAfterVendorSpend() | currency:currencyCode() }}</strong></article></section>
+          <div class="heading"><div><h2>Family cashflow</h2><p>Income, daily spending, and vendor payments for {{ reportFrom }} to {{ reportTo }}.</p></div><button class="secondary" type="button" [disabled]="!cashflowActivity().length" (click)="exportAllRecords()">Export all</button></div>
+          @if (reportLoading() && !cashflowActivity().length) { <div class="loading" role="status"><span class="spinner"></span><span>Loading family diary…</span></div> }
+          <section class="metrics cashflow-metrics"><article><span>Income</span><strong>{{ cashflowSummary().income | currency:currencyCode() }}</strong></article><article><span>Daily expenses</span><strong>{{ cashflowSummary().expenses | currency:currencyCode() }}</strong></article><article><span>Paid to vendors</span><strong>{{ vendorPaymentsTotal() | currency:currencyCode() }}</strong></article><article><span>Net cash left</span><strong>{{ netCashLeft() | currency:currencyCode() }}</strong></article></section>
+          <p class="accrual">Accrued left after all vendor charges: <strong>{{ accruedLeft() | currency:currencyCode() }}</strong>. Outstanding vendor bills: <strong>{{ outstandingTotal() | currency:currencyCode() }}</strong>.</p>
+          @if (spendByCategory().length) { <section class="categories"><h3>Spend by category</h3><div class="category-grid">@for (category of spendByCategory(); track category.name) { <div><span>{{ category.name }}</span><strong>{{ category.amount | currency:currencyCode() }}</strong></div> }</div></section> }
           <div class="form-grid">
             <label>Type<select class="input" [(ngModel)]="transactionType"><option>Expense</option><option>Income</option></select></label>
             <label>Date and time<input class="input" type="datetime-local" [(ngModel)]="transactionDate" /></label>
-            <label>Category<input class="input" [(ngModel)]="transactionCategory" placeholder="Groceries, salary, transport" /></label>
+            <label>Category<select class="input" [(ngModel)]="transactionCategory"><option value="">Select category</option>@for (group of categoryGroups; track group.label) { <optgroup [label]="group.label">@for (category of group.values; track category) { <option [value]="category">{{ category }}</option> }</optgroup> }</select></label>
             <label>Amount<input class="input" type="number" min="0.01" step="0.01" [(ngModel)]="transactionAmount" /></label>
             <label>Family member<input class="input" [(ngModel)]="transactionMember" placeholder="Optional" /></label>
             <label>Note<input class="input" [(ngModel)]="transactionNote" placeholder="Optional" /></label>
           </div>
           <button class="primary" [disabled]="!transactionCategory.trim() || !transactionAmount" (click)="addTransaction()">Add record</button>
+          <app-record-import (recordsConfirmed)="importCashflowRecords($event)" />
+          @if (savingImport()) { <div class="loading" role="status"><span class="spinner"></span><span>Saving confirmed records…</span></div> }
         </section>
         <section class="panel">
-          <div class="heading"><div><h2>Cashflow records</h2><p>{{ transactions().length }} records in the selected report period</p></div></div>
-          @if (!transactions().length) { <p class="empty">No income or daily expense records in this period.</p> }
-          <div class="scroll"><table><thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Member</th><th>Amount</th><th>Note</th><th></th></tr></thead><tbody>@for (transaction of transactions(); track transaction.id) { <tr><td>{{ transaction.date | date:'medium' }}</td><td>{{ transaction.type }}</td><td>{{ transaction.category }}</td><td>{{ transaction.memberName || 'Household' }}</td><td>{{ transaction.amount | currency:currencyCode() }}</td><td>{{ transaction.note || '—' }}</td><td><button class="icon danger" title="Delete record" (click)="deleteTransaction(transaction)">×</button></td></tr> }</tbody></table></div>
+          <div class="heading"><div><h2>Family diary</h2><p>{{ cashflowActivity().length }} records, including vendor payments</p></div></div>
+          @if (!reportLoading() && !cashflowActivity().length) { <p class="empty">No income, expense, or vendor payment records in this period.</p> }
+          @if (cashflowActivity().length) { <div class="scroll"><table><thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Member</th><th>Amount</th><th>Note</th><th></th></tr></thead><tbody>@for (activity of pagedCashflowActivity(); track activity.source + activity.id) { <tr><td>{{ activity.date | date:'medium' }}</td><td>{{ activity.type }}</td><td>{{ activity.category }}</td><td>{{ activity.memberName || 'Household' }}</td><td>{{ activity.amount | currency:currencyCode() }}</td><td>{{ activity.note || '—' }}</td><td><button class="icon danger" title="Delete record" (click)="deleteCashflowActivity(activity)">×</button></td></tr> }</tbody></table></div> }
+          @if (cashflowPageCount() > 1) { <brand-pagination [skip]="(cashflowPage() - 1) * 10" [take]="10" [total]="cashflowActivity().length" [busy]="reportLoading()" (pageChange)="cashflowPage.set(cashflowPage() + $event)">Page {{ cashflowPage() }} of {{ cashflowPageCount() }}</brand-pagination> }
         </section>
       }
 
@@ -101,7 +121,9 @@ function localDateTime(date = new Date()): string {
         </section>
         <section class="panel">
           <div class="heading"><div><h2>{{ monthLabel() }} entries</h2><p>{{ monthEntries().length }} delivery records</p></div><div class="actions"><input #fileInput hidden type="file" accept=".xlsx,.xls,.csv" (change)="importWorkbook($event)" /><button class="secondary" (click)="fileInput.click()">Import Excel</button><button class="secondary" [disabled]="!monthEntries().length" (click)="exportWorkbook()">Export Excel</button></div></div>
-          <div class="scroll"><table><thead><tr><th>Date</th><th>Period</th><th>Vendor</th><th>Qty</th><th>Captured rate</th><th>Charged</th><th>Note</th><th></th></tr></thead><tbody>
+          @if (monthLoading() && !monthEntries().length) { <div class="loading" role="status"><span class="spinner"></span><span>Loading deliveries…</span></div> }
+          @if (!monthLoading() && !monthEntries().length) { <p class="empty">No deliveries for this month.</p> }
+          @if (monthEntries().length) { <div class="scroll"><table><thead><tr><th>Date</th><th>Period</th><th>Vendor</th><th>Qty</th><th>Captured rate</th><th>Charged</th><th>Note</th><th></th></tr></thead><tbody>
             @for (entry of pagedEntries(); track entry.id) {
               <tr>
                 @if (editingId() === entry.id) {
@@ -111,14 +133,16 @@ function localDateTime(date = new Date()): string {
                 }
               </tr>
             }
-          </tbody></table></div>
-          @if (pageCount() > 1) { <div class="pagination"><button class="secondary" [disabled]="page() === 1" (click)="page.set(page() - 1)">Previous</button><span>Page {{ page() }} of {{ pageCount() }}</span><button class="secondary" [disabled]="page() === pageCount()" (click)="page.set(page() + 1)">Next</button></div> }
+          </tbody></table></div> }
+          @if (pageCount() > 1) { <brand-pagination [skip]="(page() - 1) * 10" [take]="10" [total]="monthEntries().length" [busy]="monthLoading()" (pageChange)="page.set(page() + $event)">Page {{ page() }} of {{ pageCount() }}</brand-pagination> }
         </section>
       }
 
       @if (activeTab() === 'vendors') {
         <section class="panel">
           <div class="heading"><div><h2>Vendors</h2><p>Prices use inclusive start and end dates.</p></div></div>
+          @if (vendorsLoading() && !vendors().length) { <div class="loading" role="status"><span class="spinner"></span><span>Loading vendors…</span></div> }
+          @if (!vendorsLoading() && !vendors().length) { <p class="empty">No vendors yet.</p> }
           @for (vendor of vendors(); track vendor.id) {
             <div class="vendor" [class.inactive]="!vendor.isActive">
               @if (editingVendorId() === vendor.id) {
@@ -148,6 +172,8 @@ function localDateTime(date = new Date()): string {
   `,
   styles: [`
     .household{max-width:1120px;margin:0 auto}header,.heading,.vendor,.actions,.pagination{display:flex;align-items:center;justify-content:space-between;gap:1rem}.back{color:var(--muted);text-decoration:none;font-size:.85rem}h1{margin:.35rem 0;font-size:1.65rem}h2{margin:0;font-size:1.05rem}.heading p{color:var(--muted);font-size:.84rem;margin:.25rem 0}.month{display:flex;align-items:center;gap:.4rem}nav{display:flex;gap:1.4rem;border-bottom:1px solid var(--border);margin:1.25rem 0 1rem}nav button{border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);padding:.7rem .1rem;cursor:pointer;font-weight:600}nav button.active{color:var(--text);border-color:var(--brand)}.panel,.metrics article{background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-sm)}.panel{padding:1.25rem;margin-bottom:1rem}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem;margin-bottom:1rem}.metrics article{padding:1rem}.metrics span{display:block;color:var(--muted);font-size:.76rem;margin-bottom:.35rem}.metrics strong{font-size:1.2rem}.notice{padding:.7rem 1rem;border-left:3px solid var(--brand);background:color-mix(in srgb,var(--brand) 10%,var(--surface))}.form-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.8rem;margin:1rem 0}label{color:var(--muted);font-size:.76rem;font-weight:600}.input,.cell-input{display:block;box-sizing:border-box;width:100%;padding:.52rem .65rem;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:5px;margin-top:.3rem}.cell-input{min-width:120px;margin:0}.cell-input.number{min-width:72px;width:76px}.primary,.secondary,.icon{font:inherit;border-radius:5px;cursor:pointer}.primary{border:0;background:var(--brand);color:var(--brand-text);padding:.58rem 1rem;font-weight:600}.secondary{border:1px solid var(--border);background:transparent;color:var(--text);padding:.5rem .8rem}.icon{width:32px;height:32px;border:1px solid var(--border);background:var(--surface);color:var(--text)}button:disabled{opacity:.5;cursor:default}.danger:hover{border-color:#b42318;color:#b42318}.bar-row{display:grid;grid-template-columns:minmax(100px,1fr) 4fr minmax(85px,auto);align-items:center;gap:.75rem;margin:.85rem 0;font-size:.84rem}.track{height:10px;background:var(--border);overflow:hidden}.bar{height:100%;background:var(--brand);min-width:2px}.scroll{overflow-x:auto;margin-top:1rem}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:.65rem;border-bottom:1px solid var(--border);font-size:.84rem;white-space:nowrap}th{color:var(--muted);font-size:.7rem;text-transform:uppercase}.row-actions{display:flex;gap:.25rem}.pagination{justify-content:flex-end;margin-top:1rem;color:var(--muted);font-size:.8rem}.vendor{justify-content:flex-start;padding:.65rem 0;border-bottom:1px solid var(--border)}.vendor strong{min-width:160px}.vendor .status{margin-left:auto;color:var(--muted);font-size:.76rem}.vendor.inactive{opacity:.6}.vendor>.input{margin:0}.check{display:flex;align-items:center;gap:.35rem;white-space:nowrap}.add-vendor{border-top:1px solid var(--border);padding-top:1rem}.empty{text-align:center;color:var(--muted);padding:1.5rem}.month .input{margin:0}@media(max-width:760px){header,.heading{align-items:flex-start;flex-direction:column}.metrics{grid-template-columns:repeat(2,1fr)}.form-grid{grid-template-columns:1fr}.vendor{flex-wrap:wrap}.vendor .status{margin-left:0}.bar-row{grid-template-columns:85px 1fr 75px}}
+  `, `
+    .loading{display:flex;align-items:center;justify-content:center;gap:.65rem;min-height:72px;color:var(--muted);font-size:.85rem}.spinner{width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--brand);border-radius:50%;animation:spin .8s linear infinite}.accrual{margin:.25rem 0 1rem;padding:.65rem .8rem;background:var(--bg);border-left:3px solid var(--brand);color:var(--muted);font-size:.82rem}.accrual strong{color:var(--text)}.categories{margin:1rem 0}.categories h3{font-size:.9rem;margin:0 0 .6rem}.category-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.5rem}.category-grid div{display:flex;justify-content:space-between;gap:.5rem;padding:.55rem .65rem;border:1px solid var(--border);border-radius:5px;background:var(--bg);font-size:.78rem}.category-grid span{color:var(--muted)}brand-pagination{margin-top:1rem}@keyframes spin{to{transform:rotate(360deg)}}
   `],
 })
 export class HouseholdComponent implements OnInit {
@@ -162,6 +188,11 @@ export class HouseholdComponent implements OnInit {
   readonly cashflowSummary = signal<HouseholdCashflowSummary>({ income: 0, expenses: 0, netIncome: 0 });
   readonly activeTab = signal<'overview' | 'entries' | 'vendors' | 'cashflow'>('overview');
   readonly page = signal(1);
+  readonly cashflowPage = signal(1);
+  readonly monthLoading = signal(true);
+  readonly reportLoading = signal(true);
+  readonly vendorsLoading = signal(true);
+  readonly savingImport = signal(false);
   readonly editingId = signal<string | null>(null);
   readonly editingVendorId = signal<string | null>(null);
   readonly message = signal('');
@@ -170,11 +201,33 @@ export class HouseholdComponent implements OnInit {
   readonly previousGrandTotal = computed(() => this.previousTotals().reduce((sum, total) => sum + total.totalAmount, 0));
   readonly entryCount = computed(() => this.monthlyTotals().reduce((sum, total) => sum + total.entryCount, 0));
   readonly outstandingTotal = computed(() => this.monthlyTotals().reduce((sum, total) => sum + total.balance, 0));
-  readonly netAfterVendorSpend = computed(() => this.cashflowSummary().income - this.cashflowSummary().expenses - this.grandTotal());
+  readonly vendorPaymentsTotal = computed(() => this.vendorPayments().reduce((sum, payment) => sum + payment.amount, 0));
+  readonly netCashLeft = computed(() => this.cashflowSummary().income - this.cashflowSummary().expenses - this.vendorPaymentsTotal());
+  readonly accruedLeft = computed(() => this.cashflowSummary().income - this.cashflowSummary().expenses - this.grandTotal());
   readonly currencyCode = computed(() => this.preferences.value().currency);
   readonly monthChange = computed(() => this.previousGrandTotal() ? (this.grandTotal() - this.previousGrandTotal()) / this.previousGrandTotal() * 100 : this.grandTotal() ? 100 : 0);
   readonly pageCount = computed(() => Math.max(1, Math.ceil(this.monthEntries().length / 10)));
   readonly pagedEntries = computed(() => this.monthEntries().slice((this.page() - 1) * 10, this.page() * 10));
+  readonly cashflowActivity = computed<CashflowActivity[]>(() => [
+    ...this.transactions().map((transaction) => ({
+      id: transaction.id, date: transaction.date, type: transaction.type, category: transaction.category,
+      amount: transaction.amount, memberName: transaction.memberName, note: transaction.note, source: 'transaction' as const,
+    })),
+    ...this.vendorPayments().map((payment) => ({
+      id: payment.id, date: payment.date, type: 'Vendor payment' as const, category: `Vendor: ${this.vendorName(payment.vendorId)}`,
+      amount: payment.amount, memberName: null, note: payment.note, source: 'vendorPayment' as const,
+    })),
+  ].sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime()));
+  readonly cashflowPageCount = computed(() => Math.max(1, Math.ceil(this.cashflowActivity().length / 10)));
+  readonly pagedCashflowActivity = computed(() => this.cashflowActivity().slice((this.cashflowPage() - 1) * 10, this.cashflowPage() * 10));
+  readonly spendByCategory = computed(() => {
+    const totals = new Map<string, number>();
+    for (const transaction of this.transactions().filter((item) => item.type === 'Expense')) {
+      totals.set(transaction.category, (totals.get(transaction.category) ?? 0) + transaction.amount);
+    }
+    if (this.vendorPaymentsTotal()) totals.set('Vendor payments', this.vendorPaymentsTotal());
+    return [...totals].map(([name, amount]) => ({ name, amount })).sort((left, right) => right.amount - left.amount);
+  });
 
   householdId = '';
   selectedMonth = new Date().toISOString().slice(0, 7);
@@ -202,6 +255,13 @@ export class HouseholdComponent implements OnInit {
   transactionAmount: number | null = null;
   transactionMember = '';
   transactionNote = '';
+  readonly categoryGroups = [
+    { label: 'Home', values: ['Groceries', 'Housing', 'Utilities', 'Household supplies'] },
+    { label: 'Family', values: ['Healthcare', 'Education', 'Childcare', 'Personal care', 'Gifts'] },
+    { label: 'Lifestyle', values: ['Dining', 'Transport', 'Shopping', 'Entertainment', 'Travel'] },
+    { label: 'Income', values: ['Salary', 'Business income', 'Interest', 'Refund', 'Other income'] },
+    { label: 'Other', values: ['Other expense'] },
+  ];
 
   constructor(private route: ActivatedRoute, private householdsApi: HouseholdsService, private vendorsApi: VendorsService, private entriesApi: DailyEntriesService, private paymentsApi: VendorPaymentsService, private transactionsApi: HouseholdTransactionsService, private preferences: PreferencesService) {}
 
@@ -213,7 +273,8 @@ export class HouseholdComponent implements OnInit {
   }
 
   loadVendors() {
-    this.vendorsApi.list(this.householdId).subscribe({ next: (vendors) => {
+    this.vendorsLoading.set(true);
+    this.vendorsApi.list(this.householdId).pipe(finalize(() => this.vendorsLoading.set(false))).subscribe({ next: (vendors) => {
       this.vendors.set(vendors);
       if (!this.logVendorId && vendors.length) { this.logVendorId = vendors[0].id; this.useVendorRate(); }
       if (!this.rateVendorId && vendors.length) this.rateVendorId = vendors[0].id;
@@ -225,10 +286,11 @@ export class HouseholdComponent implements OnInit {
     const [year, month] = this.selectedMonth.split('-').map(Number);
     const previous = new Date(year, month - 2, 1);
     this.page.set(1);
+    this.monthLoading.set(true);
     forkJoin({
       entries: this.entriesApi.list(this.householdId, new Date(year, month - 1, 1), new Date(year, month, 1)),
       previous: this.entriesApi.monthlyTotals(this.householdId, previous.getFullYear(), previous.getMonth() + 1),
-    }).subscribe({ next: (result) => { this.monthEntries.set(result.entries); this.previousTotals.set(result.previous); } });
+    }).pipe(finalize(() => this.monthLoading.set(false))).subscribe({ next: (result) => { this.monthEntries.set(result.entries); this.previousTotals.set(result.previous); } });
     if (this.reportPreset === 'month') this.applyReportPreset();
   }
 
@@ -262,12 +324,17 @@ export class HouseholdComponent implements OnInit {
     const from = new Date(`${this.reportFrom}T00:00:00`);
     const toExclusive = new Date(`${this.reportTo}T00:00:00`);
     toExclusive.setDate(toExclusive.getDate() + 1);
+    this.reportLoading.set(true);
+    this.cashflowPage.set(1);
     forkJoin({
       totals: this.entriesApi.rangeTotals(this.householdId, from, toExclusive),
       payments: this.paymentsApi.list(this.householdId, from, toExclusive),
       transactions: this.transactionsApi.list(this.householdId, from, toExclusive),
       cashflow: this.transactionsApi.summary(this.householdId, from, toExclusive),
-    }).subscribe({ next: (result) => { this.monthlyTotals.set(result.totals); this.vendorPayments.set(result.payments); this.transactions.set(result.transactions); this.cashflowSummary.set(result.cashflow); } });
+    }).pipe(finalize(() => this.reportLoading.set(false))).subscribe({
+      next: (result) => { this.monthlyTotals.set(result.totals); this.vendorPayments.set(result.payments); this.transactions.set(result.transactions); this.cashflowSummary.set(result.cashflow); },
+      error: () => this.message.set('The report could not be loaded. Please try again.'),
+    });
   }
 
   addVendor() {
@@ -319,6 +386,41 @@ export class HouseholdComponent implements OnInit {
 
   deleteTransaction(transaction: HouseholdTransaction) {
     if (confirm('Delete this cashflow record?')) this.transactionsApi.delete(transaction.id).subscribe({ next: () => this.loadReport() });
+  }
+
+  deleteCashflowActivity(activity: CashflowActivity) {
+    if (activity.source === 'vendorPayment') {
+      const payment = this.vendorPayments().find((item) => item.id === activity.id);
+      if (payment) this.deletePayment(payment);
+      return;
+    }
+    const transaction = this.transactions().find((item) => item.id === activity.id);
+    if (transaction) this.deleteTransaction(transaction);
+  }
+
+  importCashflowRecords(records: CreateHouseholdTransactionRequest[]) {
+    if (!records.length) return;
+    this.savingImport.set(true);
+    forkJoin(records.map((record) => this.transactionsApi.create(this.householdId, record)))
+      .pipe(finalize(() => this.savingImport.set(false)))
+      .subscribe({
+        next: () => { this.message.set(`Imported ${records.length} confirmed record${records.length === 1 ? '' : 's'}.`); this.loadReport(); },
+        error: () => this.message.set('Some records could not be imported. Review the file and try again.'),
+      });
+  }
+
+  async exportAllRecords() {
+    const XLSX = await import('xlsx');
+    const workbook = XLSX.utils.book_new();
+    const cashflow = this.cashflowActivity().map((item) => ({ Date: new Date(item.date).toLocaleString(), Type: item.type, Category: item.category, Amount: item.amount, Member: item.memberName ?? '', Note: item.note ?? '' }));
+    const deliveries = this.monthEntries().map((entry) => ({ Date: new Date(entry.date).toLocaleString(), Period: entry.period, Vendor: this.vendorName(entry.vendorId), Quantity: entry.quantity, Rate: entry.ratePerUnit, Amount: entry.amount, Note: entry.note ?? '' }));
+    const vendors = this.vendors().flatMap((vendor) => vendor.rates.length
+      ? vendor.rates.map((rate) => ({ Vendor: vendor.name, Unit: vendor.unit, Rate: rate.amount, From: rate.effectiveFrom, To: rate.effectiveTo ?? '', Active: vendor.isActive }))
+      : [{ Vendor: vendor.name, Unit: vendor.unit, Rate: vendor.ratePerUnit, From: '', To: '', Active: vendor.isActive }]);
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(cashflow), 'Family cashflow');
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(deliveries), 'Deliveries');
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(vendors), 'Vendors and prices');
+    XLSX.writeFile(workbook, `ghar-ledger-records-${this.reportFrom}-to-${this.reportTo}.xlsx`);
   }
 
   logEntry() {
