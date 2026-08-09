@@ -27,6 +27,8 @@ public sealed class VendorService
 
     public async Task<Vendor> CreateAsync(string householdId, string name, string unit, decimal ratePerUnit, CancellationToken ct = default)
     {
+        if (ratePerUnit < 0) throw new InvalidOperationException("Rate cannot be negative.");
+
         var vendor = new Vendor
         {
             HouseholdId = householdId,
@@ -39,8 +41,39 @@ public sealed class VendorService
         return vendor;
     }
 
+    public decimal GetRateForDate(Vendor vendor, DateTime date)
+    {
+        var day = date.ToUniversalTime().Date;
+        var rate = vendor.Rates
+            .Where(item => item.EffectiveFrom.Date <= day && (!item.EffectiveTo.HasValue || item.EffectiveTo.Value.Date >= day))
+            .OrderByDescending(item => item.EffectiveFrom)
+            .FirstOrDefault();
+        return rate?.Amount ?? vendor.RatePerUnit;
+    }
+
+    public async Task<VendorRate> AddRateAsync(
+        string id, decimal amount, DateTime effectiveFrom, DateTime? effectiveTo, CancellationToken ct = default)
+    {
+        var vendor = await GetByIdAsync(id, ct) ?? throw new InvalidOperationException("Vendor not found.");
+        var from = effectiveFrom.ToUniversalTime().Date;
+        var to = effectiveTo?.ToUniversalTime().Date;
+        if (amount < 0) throw new InvalidOperationException("Rate cannot be negative.");
+        if (to.HasValue && to.Value < from) throw new InvalidOperationException("Effective to must be on or after effective from.");
+        if (vendor.Rates.Any(item => from <= (item.EffectiveTo?.Date ?? DateTime.MaxValue.Date)
+            && (to ?? DateTime.MaxValue.Date) >= item.EffectiveFrom.Date))
+            throw new InvalidOperationException("Rate date ranges cannot overlap.");
+
+        var rate = new VendorRate { Amount = amount, EffectiveFrom = from, EffectiveTo = to };
+        var update = Builders<Vendor>.Update
+            .Push(x => x.Rates, rate)
+            .Set(x => x.RatePerUnit, amount);
+        await _vendors.UpdateOneAsync(x => x.Id == id, update, cancellationToken: ct);
+        return rate;
+    }
+
     public async Task<bool> UpdateAsync(string id, string name, string unit, decimal ratePerUnit, bool isActive, CancellationToken ct = default)
     {
+        if (ratePerUnit < 0) throw new InvalidOperationException("Rate cannot be negative.");
         var update = Builders<Vendor>.Update
             .Set(x => x.Name, name)
             .Set(x => x.Unit, unit)

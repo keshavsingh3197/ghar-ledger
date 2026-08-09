@@ -16,7 +16,9 @@ if (!string.IsNullOrWhiteSpace(port))
 builder.Services.AddKeshavMongo(builder.Configuration);
 builder.Services.AddSingleton<HouseholdService>();
 builder.Services.AddSingleton<VendorService>();
+builder.Services.AddSingleton<VendorPaymentService>();
 builder.Services.AddSingleton<DailyEntryService>();
+builder.Services.AddSingleton<HouseholdTransactionService>();
 
 // ---- Auth ----
 // This app is a pure RESOURCE SERVER: it has no login of its own and never mints a token. Users
@@ -100,6 +102,8 @@ app.MapHealthChecks("/health");
 
 await app.Services.GetRequiredService<HouseholdService>().EnsureIndexesAsync();
 await app.Services.GetRequiredService<VendorService>().EnsureIndexesAsync();
+await app.Services.GetRequiredService<VendorPaymentService>().EnsureIndexesAsync();
 await app.Services.GetRequiredService<DailyEntryService>().EnsureIndexesAsync();
+await app.Services.GetRequiredService<HouseholdTransactionService>().EnsureIndexesAsync();
 
 app.Run();

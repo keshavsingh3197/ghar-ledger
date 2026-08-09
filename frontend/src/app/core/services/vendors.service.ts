@@ -2,7 +2,7 @@ import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { CreateVendorRequest, UpdateVendorRequest, Vendor } from '../models/vendor.models';
+import { CreateVendorRateRequest, CreateVendorRequest, UpdateVendorRequest, Vendor, VendorRate } from '../models/vendor.models';
 
 @Injectable({ providedIn: 'root' })
 export class VendorsService {
@@ -20,6 +20,10 @@ export class VendorsService {
 
   update(id: string, req: UpdateVendorRequest): Observable<void> {
     return this.http.put<void>(`${this.baseUrl}/vendors/${id}`, req);
+  }
+
+  addRate(id: string, req: CreateVendorRateRequest): Observable<VendorRate> {
+    return this.http.post<VendorRate>(`${this.baseUrl}/vendors/${id}/rates`, req);
   }
 
   delete(id: string): Observable<void> {

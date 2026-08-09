@@ -23,9 +23,27 @@ public class Vendor
     [BsonElement("ratePerUnit")]
     public decimal RatePerUnit { get; set; }
 
+    [BsonElement("rates")]
+    public List<VendorRate> Rates { get; set; } = [];
+
     [BsonElement("isActive")]
     public bool IsActive { get; set; } = true;
 
     [BsonElement("createdAt")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class VendorRate
+{
+    [BsonElement("id")]
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    [BsonElement("amount")]
+    public decimal Amount { get; set; }
+
+    [BsonElement("effectiveFrom")]
+    public DateTime EffectiveFrom { get; set; }
+
+    [BsonElement("effectiveTo")]
+    public DateTime? EffectiveTo { get; set; }
 }

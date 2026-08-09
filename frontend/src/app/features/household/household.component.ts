@@ -1,13 +1,18 @@
-import { DatePipe, DecimalPipe } from '@angular/common';
+import { CurrencyPipe, DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, OnInit, computed, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { forkJoin } from 'rxjs';
 import { DailyEntry, DeliveryPeriod, MonthlyVendorTotal } from '../../core/models/daily-entry.models';
 import { Household } from '../../core/models/household.models';
+import { HouseholdCashflowSummary, HouseholdTransaction, HouseholdTransactionType } from '../../core/models/household-transaction.models';
+import { VendorPayment } from '../../core/models/vendor-payment.models';
 import { Vendor } from '../../core/models/vendor.models';
 import { DailyEntriesService } from '../../core/services/daily-entries.service';
 import { HouseholdsService } from '../../core/services/households.service';
+import { HouseholdTransactionsService } from '../../core/services/household-transactions.service';
+import { PreferencesService } from '../../core/services/preferences.service';
+import { VendorPaymentsService } from '../../core/services/vendor-payments.service';
 import { VendorsService } from '../../core/services/vendors.service';
 
 function localDateTime(date = new Date()): string {
@@ -17,7 +22,7 @@ function localDateTime(date = new Date()): string {
 @Component({
   selector: 'app-household',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [DatePipe, DecimalPipe, FormsModule, RouterLink],
+  imports: [CurrencyPipe, DatePipe, FormsModule, RouterLink],
   template: `
     <div class="household">
       <header>
@@ -31,23 +36,52 @@ function localDateTime(date = new Date()): string {
       </nav>
 
       @if (activeTab() === 'overview') {
+        <section class="panel report-controls">
+          <div class="heading"><div><h2>Report period</h2><p>Vendor charges, payments, and balance for inclusive dates.</p></div></div>
+          <div class="form-grid">
+            <label>Period<select class="input" [(ngModel)]="reportPreset" (change)="applyReportPreset()"><option value="month">Monthly</option><option value="quarter">Quarterly</option><option value="year">Yearly</option><option value="custom">Custom</option></select></label>
+            <label>From<input class="input" type="date" [(ngModel)]="reportFrom" (change)="loadReport()" /></label>
+            <label>To (included)<input class="input" type="date" [(ngModel)]="reportTo" (change)="loadReport()" /></label>
+          </div>
+        </section>
         <section class="metrics">
-          <article><span>Current month</span><strong>₹{{ grandTotal() | number:'1.2-2' }}</strong></article>
-          <article><span>Previous month</span><strong>₹{{ previousGrandTotal() | number:'1.2-2' }}</strong></article>
-          <article><span>Month change</span><strong>{{ monthChange() > 0 ? '+' : '' }}{{ monthChange() | number:'1.1-1' }}%</strong></article>
-          <article><span>Outstanding</span><strong>₹{{ outstandingTotal() | number:'1.2-2' }}</strong></article>
+          <article><span>Selected spend</span><strong>{{ grandTotal() | currency:currencyCode() }}</strong></article>
+          <article><span>Family income</span><strong>{{ cashflowSummary().income | currency:currencyCode() }}</strong></article>
+          <article><span>Other expenses</span><strong>{{ cashflowSummary().expenses | currency:currencyCode() }}</strong></article>
+          <article><span>Net left</span><strong>{{ netAfterVendorSpend() | currency:currencyCode() }}</strong></article>
         </section>
         <section class="panel">
-          <div class="heading"><div><h2>Spend by vendor</h2><p>{{ monthLabel() }} at captured delivery prices</p></div></div>
-          @if (!monthlyTotals().length) { <p class="empty">No entries for this month.</p> }
+          <div class="heading"><div><h2>Spend by vendor</h2><p>{{ reportFrom }} to {{ reportTo }}, inclusive</p></div></div>
+          @if (!monthlyTotals().length) { <p class="empty">No vendor activity for this period.</p> }
           @for (total of monthlyTotals(); track total.vendorId) {
-            <div class="bar-row"><span>{{ total.vendorName }}</span><div class="track"><div class="bar" [style.width.%]="barWidth(total.totalAmount)"></div></div><strong>₹{{ total.totalAmount | number:'1.2-2' }}</strong></div>
+            <div class="bar-row"><span>{{ total.vendorName }}</span><div class="track"><div class="bar" [style.width.%]="barWidth(total.totalAmount)"></div></div><strong>{{ total.totalAmount | currency:currencyCode() }}</strong></div>
           }
           @if (monthlyTotals().length) {
             <div class="scroll"><table><thead><tr><th>Vendor</th><th>Deliveries</th><th>Quantity</th><th>Charged</th><th>Paid</th><th>Balance</th></tr></thead><tbody>
-              @for (total of monthlyTotals(); track total.vendorId) { <tr><td>{{ total.vendorName }}</td><td>{{ total.entryCount }}</td><td>{{ total.totalQuantity }}</td><td>₹{{ total.totalAmount | number:'1.2-2' }}</td><td>₹{{ total.totalPaid | number:'1.2-2' }}</td><td>₹{{ total.balance | number:'1.2-2' }}</td></tr> }
+              @for (total of monthlyTotals(); track total.vendorId) { <tr><td>{{ total.vendorName }}</td><td>{{ total.entryCount }}</td><td>{{ total.totalQuantity }}</td><td>{{ total.totalAmount | currency:currencyCode() }}</td><td>{{ total.totalPaid | currency:currencyCode() }}</td><td>{{ total.balance | currency:currencyCode() }}</td></tr> }
             </tbody></table></div>
           }
+        </section>
+      }
+
+      @if (activeTab() === 'cashflow') {
+        <section class="panel">
+          <div class="heading"><div><h2>Family cashflow</h2><p>Income and daily spending for {{ reportFrom }} to {{ reportTo }}.</p></div></div>
+          <section class="metrics cashflow-metrics"><article><span>Income</span><strong>{{ cashflowSummary().income | currency:currencyCode() }}</strong></article><article><span>Daily expenses</span><strong>{{ cashflowSummary().expenses | currency:currencyCode() }}</strong></article><article><span>Vendor spend</span><strong>{{ grandTotal() | currency:currencyCode() }}</strong></article><article><span>Net left</span><strong>{{ netAfterVendorSpend() | currency:currencyCode() }}</strong></article></section>
+          <div class="form-grid">
+            <label>Type<select class="input" [(ngModel)]="transactionType"><option>Expense</option><option>Income</option></select></label>
+            <label>Date and time<input class="input" type="datetime-local" [(ngModel)]="transactionDate" /></label>
+            <label>Category<input class="input" [(ngModel)]="transactionCategory" placeholder="Groceries, salary, transport" /></label>
+            <label>Amount<input class="input" type="number" min="0.01" step="0.01" [(ngModel)]="transactionAmount" /></label>
+            <label>Family member<input class="input" [(ngModel)]="transactionMember" placeholder="Optional" /></label>
+            <label>Note<input class="input" [(ngModel)]="transactionNote" placeholder="Optional" /></label>
+          </div>
+          <button class="primary" [disabled]="!transactionCategory.trim() || !transactionAmount" (click)="addTransaction()">Add record</button>
+        </section>
+        <section class="panel">
+          <div class="heading"><div><h2>Cashflow records</h2><p>{{ transactions().length }} records in the selected report period</p></div></div>
+          @if (!transactions().length) { <p class="empty">No income or daily expense records in this period.</p> }
+          <div class="scroll"><table><thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Member</th><th>Amount</th><th>Note</th><th></th></tr></thead><tbody>@for (transaction of transactions(); track transaction.id) { <tr><td>{{ transaction.date | date:'medium' }}</td><td>{{ transaction.type }}</td><td>{{ transaction.category }}</td><td>{{ transaction.memberName || 'Household' }}</td><td>{{ transaction.amount | currency:currencyCode() }}</td><td>{{ transaction.note || '—' }}</td><td><button class="icon danger" title="Delete record" (click)="deleteTransaction(transaction)">×</button></td></tr> }</tbody></table></div>
         </section>
       }
 
@@ -60,22 +94,20 @@ function localDateTime(date = new Date()): string {
               <label>Date and time<input class="input" type="datetime-local" [(ngModel)]="logDate" /></label>
               <label>Delivery<select class="input" [(ngModel)]="logPeriod"><option>Morning</option><option>Evening</option><option>Anytime</option></select></label>
               <label>Quantity<input class="input" type="number" min="0.01" step="0.01" [(ngModel)]="logQuantity" /></label>
-              <label>Rate per unit<input class="input" type="number" min="0" step="0.01" [(ngModel)]="logRate" /></label>
-              <label>Amount paid<input class="input" type="number" min="0" step="0.01" [(ngModel)]="logPaid" /></label>
               <label>Note<input class="input" [(ngModel)]="logNote" placeholder="Optional" /></label>
             </div>
             <button class="primary" [disabled]="!canLog()" (click)="logEntry()">Add delivery</button>
           }
         </section>
         <section class="panel">
-          <div class="heading"><div><h2>{{ monthLabel() }} entries</h2><p>{{ monthEntries().length }} records</p></div><div class="actions"><input #fileInput hidden type="file" accept=".xlsx,.xls,.csv" (change)="importWorkbook($event)" /><button class="secondary" (click)="fileInput.click()">Import Excel</button><button class="secondary" [disabled]="!monthEntries().length" (click)="exportWorkbook()">Export Excel</button></div></div>
-          <div class="scroll"><table><thead><tr><th>Date</th><th>Period</th><th>Vendor</th><th>Qty</th><th>Rate</th><th>Charged</th><th>Paid</th><th>Balance</th><th>Note</th><th></th></tr></thead><tbody>
+          <div class="heading"><div><h2>{{ monthLabel() }} entries</h2><p>{{ monthEntries().length }} delivery records</p></div><div class="actions"><input #fileInput hidden type="file" accept=".xlsx,.xls,.csv" (change)="importWorkbook($event)" /><button class="secondary" (click)="fileInput.click()">Import Excel</button><button class="secondary" [disabled]="!monthEntries().length" (click)="exportWorkbook()">Export Excel</button></div></div>
+          <div class="scroll"><table><thead><tr><th>Date</th><th>Period</th><th>Vendor</th><th>Qty</th><th>Captured rate</th><th>Charged</th><th>Note</th><th></th></tr></thead><tbody>
             @for (entry of pagedEntries(); track entry.id) {
               <tr>
                 @if (editingId() === entry.id) {
-                  <td><input class="cell-input" type="datetime-local" [(ngModel)]="editEntry.date" /></td><td><select class="cell-input" [(ngModel)]="editEntry.period"><option>Morning</option><option>Evening</option><option>Anytime</option></select></td><td>{{ vendorName(entry.vendorId) }}</td><td><input class="cell-input number" type="number" [(ngModel)]="editEntry.quantity" /></td><td><input class="cell-input number" type="number" [(ngModel)]="editEntry.ratePerUnit" /></td><td>₹{{ editEntry.quantity * editEntry.ratePerUnit | number:'1.2-2' }}</td><td><input class="cell-input number" type="number" [(ngModel)]="editEntry.paidAmount" /></td><td>₹{{ editEntry.quantity * editEntry.ratePerUnit - editEntry.paidAmount | number:'1.2-2' }}</td><td><input class="cell-input" [(ngModel)]="editEntry.note" /></td><td class="row-actions"><button class="icon" title="Save" (click)="saveEntry(entry)">✓</button><button class="icon" title="Cancel" (click)="editingId.set(null)">×</button></td>
+                  <td><input class="cell-input" type="datetime-local" [(ngModel)]="editEntry.date" /></td><td><select class="cell-input" [(ngModel)]="editEntry.period"><option>Morning</option><option>Evening</option><option>Anytime</option></select></td><td>{{ vendorName(entry.vendorId) }}</td><td><input class="cell-input number" type="number" [(ngModel)]="editEntry.quantity" /></td><td>{{ entry.ratePerUnit | currency:currencyCode() }}</td><td>{{ editEntry.quantity * entry.ratePerUnit | currency:currencyCode() }}</td><td><input class="cell-input" [(ngModel)]="editEntry.note" /></td><td class="row-actions"><button class="icon" title="Save" (click)="saveEntry(entry)">✓</button><button class="icon" title="Cancel" (click)="editingId.set(null)">×</button></td>
                 } @else {
-                  <td>{{ entry.date | date:'medium' }}</td><td>{{ entry.period }}</td><td>{{ vendorName(entry.vendorId) }}</td><td>{{ entry.quantity }}</td><td>₹{{ entry.ratePerUnit | number:'1.2-2' }}</td><td>₹{{ entry.amount | number:'1.2-2' }}</td><td>₹{{ entry.paidAmount | number:'1.2-2' }}</td><td>₹{{ entry.amount - entry.paidAmount | number:'1.2-2' }}</td><td>{{ entry.note || '—' }}</td><td class="row-actions"><button class="icon" title="Edit" (click)="startEdit(entry)">✎</button><button class="icon danger" title="Delete" (click)="deleteEntry(entry)">×</button></td>
+                  <td>{{ entry.date | date:'medium' }}</td><td>{{ entry.period }}</td><td>{{ vendorName(entry.vendorId) }}</td><td>{{ entry.quantity }}</td><td>{{ entry.ratePerUnit | currency:currencyCode() }}</td><td>{{ entry.amount | currency:currencyCode() }}</td><td>{{ entry.note || '—' }}</td><td class="row-actions"><button class="icon" title="Edit" (click)="startEdit(entry)">✎</button><button class="icon danger" title="Delete" (click)="deleteEntry(entry)">×</button></td>
                 }
               </tr>
             }
@@ -86,18 +118,30 @@ function localDateTime(date = new Date()): string {
 
       @if (activeTab() === 'vendors') {
         <section class="panel">
-          <div class="heading"><div><h2>Vendors</h2><p>Rate changes apply only to new deliveries.</p></div></div>
+          <div class="heading"><div><h2>Vendors</h2><p>Prices use inclusive start and end dates.</p></div></div>
           @for (vendor of vendors(); track vendor.id) {
             <div class="vendor" [class.inactive]="!vendor.isActive">
               @if (editingVendorId() === vendor.id) {
                 <input class="input" [(ngModel)]="editVendor.name" /><input class="input" [(ngModel)]="editVendor.unit" /><input class="input" type="number" min="0" [(ngModel)]="editVendor.ratePerUnit" /><label class="check"><input type="checkbox" [(ngModel)]="editVendor.isActive" /> Active</label><button class="icon" title="Save" (click)="saveVendor(vendor)">✓</button><button class="icon" title="Cancel" (click)="editingVendorId.set(null)">×</button>
               } @else {
-                <strong>{{ vendor.name }}</strong><span>₹{{ vendor.ratePerUnit | number:'1.2-2' }} / {{ vendor.unit }}</span><span class="status">{{ vendor.isActive ? 'Active' : 'Inactive' }}</span><button class="icon" title="Edit" (click)="startVendorEdit(vendor)">✎</button><button class="icon danger" title="Delete" (click)="deleteVendor(vendor)">×</button>
+                <strong>{{ vendor.name }}</strong><span>{{ vendor.ratePerUnit | currency:currencyCode() }} / {{ vendor.unit }}</span><span class="status">{{ vendor.isActive ? 'Active' : 'Inactive' }}</span><button class="icon" title="Edit" (click)="startVendorEdit(vendor)">✎</button><button class="icon danger" title="Delete" (click)="deleteVendor(vendor)">×</button>
               }
             </div>
+            @if (vendor.rates.length) { <div class="rate-list">@for (rate of vendor.rates; track rate.id) { <span>{{ rate.amount | currency:currencyCode() }}: {{ rate.effectiveFrom | date:'mediumDate' }} to {{ rate.effectiveTo ? (rate.effectiveTo | date:'mediumDate') : 'ongoing' }}</span> }</div> }
           }
           <div class="form-grid add-vendor"><label>Name<input class="input" [(ngModel)]="newVendor.name" placeholder="Milk vendor" /></label><label>Unit<input class="input" [(ngModel)]="newVendor.unit" /></label><label>Rate per unit<input class="input" type="number" min="0" [(ngModel)]="newVendor.ratePerUnit" /></label></div>
           <button class="primary" [disabled]="!newVendor.name.trim()" (click)="addVendor()">Add vendor</button>
+        </section>
+        <section class="panel">
+          <div class="heading"><div><h2>Add vendor price</h2><p>Leave the end date empty for an ongoing price.</p></div></div>
+          <div class="form-grid"><label>Vendor<select class="input" [(ngModel)]="rateVendorId">@for (vendor of vendors(); track vendor.id) { <option [value]="vendor.id">{{ vendor.name }}</option> }</select></label><label>Price per unit<input class="input" type="number" min="0" step="0.01" [(ngModel)]="newRate.amount" /></label><label>From<input class="input" type="date" [(ngModel)]="newRate.effectiveFrom" /></label><label>To (included)<input class="input" type="date" [(ngModel)]="newRate.effectiveTo" /></label></div>
+          <button class="primary" [disabled]="!rateVendorId || newRate.amount < 0 || !newRate.effectiveFrom" (click)="addRate()">Add price</button>
+        </section>
+        <section class="panel">
+          <div class="heading"><div><h2>Vendor payments</h2><p>Record money separately from deliveries, with the exact date and time.</p></div></div>
+          <div class="form-grid"><label>Vendor<select class="input" [(ngModel)]="paymentVendorId">@for (vendor of vendors(); track vendor.id) { <option [value]="vendor.id">{{ vendor.name }}</option> }</select></label><label>Date and time<input class="input" type="datetime-local" [(ngModel)]="paymentDate" /></label><label>Amount<input class="input" type="number" min="0.01" step="0.01" [(ngModel)]="paymentAmount" /></label><label>Note<input class="input" [(ngModel)]="paymentNote" placeholder="Optional" /></label></div>
+          <button class="primary" [disabled]="!paymentVendorId || !paymentDate || !paymentAmount" (click)="addPayment()">Record payment</button>
+          <div class="scroll payment-list"><table><thead><tr><th>Date</th><th>Vendor</th><th>Paid</th><th>Note</th><th></th></tr></thead><tbody>@for (payment of vendorPayments(); track payment.id) { <tr><td>{{ payment.date | date:'medium' }}</td><td>{{ vendorName(payment.vendorId) }}</td><td>{{ payment.amount | currency:currencyCode() }}</td><td>{{ payment.note || '—' }}</td><td><button class="icon danger" title="Delete payment" (click)="deletePayment(payment)">×</button></td></tr> }</tbody></table></div>
         </section>
       }
     </div>
@@ -107,13 +151,16 @@ function localDateTime(date = new Date()): string {
   `],
 })
 export class HouseholdComponent implements OnInit {
-  readonly tabs = [{ id: 'overview' as const, label: 'Overview' }, { id: 'entries' as const, label: 'Entries' }, { id: 'vendors' as const, label: 'Vendors' }];
+  readonly tabs = [{ id: 'overview' as const, label: 'Overview' }, { id: 'entries' as const, label: 'Entries' }, { id: 'vendors' as const, label: 'Vendors' }, { id: 'cashflow' as const, label: 'Family cashflow' }];
   readonly household = signal<Household | null>(null);
   readonly vendors = signal<Vendor[]>([]);
   readonly monthEntries = signal<DailyEntry[]>([]);
   readonly monthlyTotals = signal<MonthlyVendorTotal[]>([]);
   readonly previousTotals = signal<MonthlyVendorTotal[]>([]);
-  readonly activeTab = signal<'overview' | 'entries' | 'vendors'>('overview');
+  readonly vendorPayments = signal<VendorPayment[]>([]);
+  readonly transactions = signal<HouseholdTransaction[]>([]);
+  readonly cashflowSummary = signal<HouseholdCashflowSummary>({ income: 0, expenses: 0, netIncome: 0 });
+  readonly activeTab = signal<'overview' | 'entries' | 'vendors' | 'cashflow'>('overview');
   readonly page = signal(1);
   readonly editingId = signal<string | null>(null);
   readonly editingVendorId = signal<string | null>(null);
@@ -123,12 +170,17 @@ export class HouseholdComponent implements OnInit {
   readonly previousGrandTotal = computed(() => this.previousTotals().reduce((sum, total) => sum + total.totalAmount, 0));
   readonly entryCount = computed(() => this.monthlyTotals().reduce((sum, total) => sum + total.entryCount, 0));
   readonly outstandingTotal = computed(() => this.monthlyTotals().reduce((sum, total) => sum + total.balance, 0));
+  readonly netAfterVendorSpend = computed(() => this.cashflowSummary().income - this.cashflowSummary().expenses - this.grandTotal());
+  readonly currencyCode = computed(() => this.preferences.value().currency);
   readonly monthChange = computed(() => this.previousGrandTotal() ? (this.grandTotal() - this.previousGrandTotal()) / this.previousGrandTotal() * 100 : this.grandTotal() ? 100 : 0);
   readonly pageCount = computed(() => Math.max(1, Math.ceil(this.monthEntries().length / 10)));
   readonly pagedEntries = computed(() => this.monthEntries().slice((this.page() - 1) * 10, this.page() * 10));
 
   householdId = '';
   selectedMonth = new Date().toISOString().slice(0, 7);
+  reportPreset: 'month' | 'quarter' | 'year' | 'custom' = 'month';
+  reportFrom = `${this.selectedMonth}-01`;
+  reportTo = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().slice(0, 10);
   newVendor = { name: '', unit: 'liter', ratePerUnit: 0 };
   editVendor = { name: '', unit: '', ratePerUnit: 0, isActive: true };
   logVendorId = '';
@@ -136,11 +188,22 @@ export class HouseholdComponent implements OnInit {
   logPeriod: DeliveryPeriod = new Date().getHours() < 15 ? 'Morning' : 'Evening';
   logQuantity: number | null = null;
   logRate: number | null = null;
-  logPaid = 0;
   logNote = '';
   editEntry = { date: '', period: 'Anytime' as DeliveryPeriod, quantity: 0, ratePerUnit: 0, paidAmount: 0, note: '' };
+  rateVendorId = '';
+  newRate = { amount: 0, effectiveFrom: new Date().toISOString().slice(0, 10), effectiveTo: '' };
+  paymentVendorId = '';
+  paymentDate = localDateTime();
+  paymentAmount: number | null = null;
+  paymentNote = '';
+  transactionType: HouseholdTransactionType = 'Expense';
+  transactionDate = localDateTime();
+  transactionCategory = '';
+  transactionAmount: number | null = null;
+  transactionMember = '';
+  transactionNote = '';
 
-  constructor(private route: ActivatedRoute, private householdsApi: HouseholdsService, private vendorsApi: VendorsService, private entriesApi: DailyEntriesService) {}
+  constructor(private route: ActivatedRoute, private householdsApi: HouseholdsService, private vendorsApi: VendorsService, private entriesApi: DailyEntriesService, private paymentsApi: VendorPaymentsService, private transactionsApi: HouseholdTransactionsService, private preferences: PreferencesService) {}
 
   ngOnInit() {
     this.householdId = this.route.snapshot.paramMap.get('id') ?? '';
@@ -153,6 +216,8 @@ export class HouseholdComponent implements OnInit {
     this.vendorsApi.list(this.householdId).subscribe({ next: (vendors) => {
       this.vendors.set(vendors);
       if (!this.logVendorId && vendors.length) { this.logVendorId = vendors[0].id; this.useVendorRate(); }
+      if (!this.rateVendorId && vendors.length) this.rateVendorId = vendors[0].id;
+      if (!this.paymentVendorId && vendors.length) this.paymentVendorId = vendors[0].id;
     } });
   }
 
@@ -162,9 +227,9 @@ export class HouseholdComponent implements OnInit {
     this.page.set(1);
     forkJoin({
       entries: this.entriesApi.list(this.householdId, new Date(year, month - 1, 1), new Date(year, month, 1)),
-      totals: this.entriesApi.monthlyTotals(this.householdId, year, month),
       previous: this.entriesApi.monthlyTotals(this.householdId, previous.getFullYear(), previous.getMonth() + 1),
-    }).subscribe({ next: (result) => { this.monthEntries.set(result.entries); this.monthlyTotals.set(result.totals); this.previousTotals.set(result.previous); } });
+    }).subscribe({ next: (result) => { this.monthEntries.set(result.entries); this.previousTotals.set(result.previous); } });
+    if (this.reportPreset === 'month') this.applyReportPreset();
   }
 
   changeMonth(offset: number) {
@@ -180,6 +245,31 @@ export class HouseholdComponent implements OnInit {
   canLog() { return !!this.logVendorId && !!this.logDate && !!this.logQuantity && this.logRate !== null && this.logRate >= 0; }
   useVendorRate() { this.logRate = this.vendors().find((vendor) => vendor.id === this.logVendorId)?.ratePerUnit ?? null; }
 
+  applyReportPreset() {
+    if (this.reportPreset === 'custom') return;
+    const [year, month] = this.selectedMonth.split('-').map(Number);
+    const startMonth = this.reportPreset === 'quarter' ? Math.floor((month - 1) / 3) * 3 : this.reportPreset === 'year' ? 0 : month - 1;
+    const months = this.reportPreset === 'quarter' ? 3 : this.reportPreset === 'year' ? 12 : 1;
+    const from = new Date(year, startMonth, 1);
+    const to = new Date(year, startMonth + months, 0);
+    this.reportFrom = localDateTime(from).slice(0, 10);
+    this.reportTo = localDateTime(to).slice(0, 10);
+    this.loadReport();
+  }
+
+  loadReport() {
+    if (!this.reportFrom || !this.reportTo || this.reportTo < this.reportFrom) return;
+    const from = new Date(`${this.reportFrom}T00:00:00`);
+    const toExclusive = new Date(`${this.reportTo}T00:00:00`);
+    toExclusive.setDate(toExclusive.getDate() + 1);
+    forkJoin({
+      totals: this.entriesApi.rangeTotals(this.householdId, from, toExclusive),
+      payments: this.paymentsApi.list(this.householdId, from, toExclusive),
+      transactions: this.transactionsApi.list(this.householdId, from, toExclusive),
+      cashflow: this.transactionsApi.summary(this.householdId, from, toExclusive),
+    }).subscribe({ next: (result) => { this.monthlyTotals.set(result.totals); this.vendorPayments.set(result.payments); this.transactions.set(result.transactions); this.cashflowSummary.set(result.cashflow); } });
+  }
+
   addVendor() {
     const name = this.newVendor.name.trim();
     if (!name) return;
@@ -190,13 +280,54 @@ export class HouseholdComponent implements OnInit {
   saveVendor(vendor: Vendor) { this.vendorsApi.update(vendor.id, this.editVendor).subscribe({ next: () => { this.editingVendorId.set(null); this.loadVendors(); } }); }
   deleteVendor(vendor: Vendor) { if (confirm(`Delete vendor "${vendor.name}"?`)) this.vendorsApi.delete(vendor.id).subscribe({ next: () => this.loadVendors() }); }
 
+  addRate() {
+    this.vendorsApi.addRate(this.rateVendorId, {
+      amount: this.newRate.amount,
+      effectiveFrom: new Date(`${this.newRate.effectiveFrom}T00:00:00`).toISOString(),
+      effectiveTo: this.newRate.effectiveTo ? new Date(`${this.newRate.effectiveTo}T23:59:59.999`).toISOString() : null,
+    }).subscribe({
+      next: () => { this.newRate = { amount: 0, effectiveFrom: new Date().toISOString().slice(0, 10), effectiveTo: '' }; this.loadVendors(); },
+      error: (error) => this.message.set(error.error || 'Could not add price period.'),
+    });
+  }
+
+  addPayment() {
+    if (!this.paymentAmount) return;
+    this.paymentsApi.create(this.householdId, {
+      vendorId: this.paymentVendorId,
+      date: new Date(this.paymentDate).toISOString(),
+      amount: this.paymentAmount,
+      note: this.paymentNote.trim() || null,
+    }).subscribe({ next: () => { this.paymentAmount = null; this.paymentNote = ''; this.loadReport(); } });
+  }
+
+  deletePayment(payment: VendorPayment) {
+    if (confirm('Delete this vendor payment?')) this.paymentsApi.delete(payment.id).subscribe({ next: () => this.loadReport() });
+  }
+
+  addTransaction() {
+    if (!this.transactionAmount || !this.transactionCategory.trim()) return;
+    this.transactionsApi.create(this.householdId, {
+      date: new Date(this.transactionDate).toISOString(),
+      type: this.transactionType,
+      category: this.transactionCategory.trim(),
+      amount: this.transactionAmount,
+      memberName: this.transactionMember.trim() || null,
+      note: this.transactionNote.trim() || null,
+    }).subscribe({ next: () => { this.transactionAmount = null; this.transactionCategory = ''; this.transactionNote = ''; this.loadReport(); } });
+  }
+
+  deleteTransaction(transaction: HouseholdTransaction) {
+    if (confirm('Delete this cashflow record?')) this.transactionsApi.delete(transaction.id).subscribe({ next: () => this.loadReport() });
+  }
+
   logEntry() {
     if (!this.canLog()) return;
-    this.entriesApi.create(this.householdId, { vendorId: this.logVendorId, date: new Date(this.logDate).toISOString(), period: this.logPeriod, quantity: this.logQuantity!, ratePerUnit: this.logRate, paidAmount: this.logPaid, note: this.logNote.trim() || null }).subscribe({ next: () => { this.logQuantity = null; this.logPaid = 0; this.logNote = ''; this.loadMonth(); } });
+    this.entriesApi.create(this.householdId, { vendorId: this.logVendorId, date: new Date(this.logDate).toISOString(), period: this.logPeriod, quantity: this.logQuantity!, note: this.logNote.trim() || null }).subscribe({ next: () => { this.logQuantity = null; this.logNote = ''; this.loadMonth(); } });
   }
 
   startEdit(entry: DailyEntry) { this.editingId.set(entry.id); this.editEntry = { date: localDateTime(new Date(entry.date)), period: entry.period, quantity: entry.quantity, ratePerUnit: entry.ratePerUnit, paidAmount: entry.paidAmount ?? 0, note: entry.note ?? '' }; }
-  saveEntry(entry: DailyEntry) { this.entriesApi.update(entry.id, { ...this.editEntry, date: new Date(this.editEntry.date).toISOString(), note: this.editEntry.note.trim() || null }).subscribe({ next: () => { this.editingId.set(null); this.loadMonth(); } }); }
+  saveEntry(entry: DailyEntry) { this.entriesApi.update(entry.id, { ...this.editEntry, ratePerUnit: entry.ratePerUnit, paidAmount: entry.paidAmount, date: new Date(this.editEntry.date).toISOString(), note: this.editEntry.note.trim() || null }).subscribe({ next: () => { this.editingId.set(null); this.loadMonth(); } }); }
   deleteEntry(entry: DailyEntry) { if (confirm('Delete this delivery?')) this.entriesApi.delete(entry.id).subscribe({ next: () => this.loadMonth() }); }
 
   async exportWorkbook() {

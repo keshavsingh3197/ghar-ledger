@@ -8,11 +8,13 @@ public sealed class DailyEntryService
 {
     private readonly IMongoCollection<DailyEntry> _entries;
     private readonly VendorService _vendors;
+    private readonly VendorPaymentService _payments;
 
-    public DailyEntryService(MongoDbService db, VendorService vendors)
+    public DailyEntryService(MongoDbService db, VendorService vendors, VendorPaymentService payments)
     {
         _entries = db.GetCollection<DailyEntry>("daily_entries");
         _vendors = vendors;
+        _payments = payments;
     }
 
     public async Task EnsureIndexesAsync(CancellationToken ct = default)
@@ -34,10 +36,9 @@ public sealed class DailyEntryService
     {
         var vendor = await _vendors.GetByIdAsync(req.VendorId, ct)
             ?? throw new InvalidOperationException("Vendor not found.");
-        var ratePerUnit = req.RatePerUnit ?? vendor.RatePerUnit;
+        var ratePerUnit = req.RatePerUnit ?? _vendors.GetRateForDate(vendor, req.Date);
         if (req.Quantity <= 0) throw new InvalidOperationException("Quantity must be greater than zero.");
         if (ratePerUnit < 0) throw new InvalidOperationException("Rate cannot be negative.");
-        if (req.PaidAmount < 0) throw new InvalidOperationException("Paid amount cannot be negative.");
 
         var entry = new DailyEntry
         {
@@ -48,7 +49,7 @@ public sealed class DailyEntryService
             Quantity = req.Quantity,
             RatePerUnit = ratePerUnit,
             Amount = req.Quantity * ratePerUnit,
-            PaidAmount = req.PaidAmount,
+            PaidAmount = 0,
             Note = req.Note,
             CreatedAt = DateTime.UtcNow,
         };
@@ -62,7 +63,6 @@ public sealed class DailyEntryService
         if (existing is null) return false;
         if (req.Quantity <= 0) throw new InvalidOperationException("Quantity must be greater than zero.");
         if (req.RatePerUnit < 0) throw new InvalidOperationException("Rate cannot be negative.");
-        if (req.PaidAmount < 0) throw new InvalidOperationException("Paid amount cannot be negative.");
 
         var update = Builders<DailyEntry>.Update
             .Set(x => x.Date, req.Date.ToUniversalTime())
@@ -70,7 +70,6 @@ public sealed class DailyEntryService
             .Set(x => x.Quantity, req.Quantity)
             .Set(x => x.RatePerUnit, req.RatePerUnit)
             .Set(x => x.Amount, req.Quantity * req.RatePerUnit)
-            .Set(x => x.PaidAmount, req.PaidAmount)
             .Set(x => x.Note, req.Note);
         var result = await _entries.UpdateOneAsync(x => x.Id == id, update, cancellationToken: ct);
         return result.IsAcknowledged && result.MatchedCount > 0;
@@ -87,19 +86,25 @@ public sealed class DailyEntryService
         string householdId, DateTime from, DateTime to, CancellationToken ct = default)
     {
         var entries = await ListAsync(householdId, from, to, ct);
+        var payments = await _payments.ListAsync(householdId, from, to, ct);
         var vendors = await _vendors.ListForHouseholdAsync(householdId, ct);
         var vendorNames = vendors.ToDictionary(v => v.Id ?? "", v => v.Name);
 
-        return entries
-            .GroupBy(e => e.VendorId)
-            .Select(g => new MonthlyVendorTotal(
-                g.Key,
-                vendorNames.TryGetValue(g.Key, out var name) ? name : "(deleted vendor)",
-                g.Count(),
-                g.Sum(e => e.Quantity),
-                g.Sum(e => e.Amount),
-                g.Sum(e => e.PaidAmount),
-                g.Sum(e => e.Amount - e.PaidAmount)))
+        return entries.Select(e => e.VendorId).Concat(payments.Select(p => p.VendorId)).Distinct()
+            .Select(vendorId =>
+            {
+                var vendorEntries = entries.Where(e => e.VendorId == vendorId).ToList();
+                var paid = vendorEntries.Sum(e => e.PaidAmount) + payments.Where(p => p.VendorId == vendorId).Sum(p => p.Amount);
+                var charged = vendorEntries.Sum(e => e.Amount);
+                return new MonthlyVendorTotal(
+                    vendorId,
+                    vendorNames.TryGetValue(vendorId, out var name) ? name : "(deleted vendor)",
+                    vendorEntries.Count,
+                    vendorEntries.Sum(e => e.Quantity),
+                    charged,
+                    paid,
+                    charged - paid);
+            })
             .OrderByDescending(t => t.TotalAmount)
             .ToList();
     }

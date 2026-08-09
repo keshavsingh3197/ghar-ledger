@@ -46,6 +46,22 @@ public class VendorsController : ControllerBase
         return updated ? NoContent() : NotFound();
     }
 
+    [HttpPost("api/vendors/{id}/rates")]
+    public async Task<ActionResult<VendorRate>> AddRate(string id, [FromBody] CreateVendorRateRequest req)
+    {
+        var vendor = await _vendors.GetByIdAsync(id);
+        if (vendor is null || !await _households.IsMemberAsync(vendor.HouseholdId, User.GetUserId())) return NotFound();
+
+        try
+        {
+            return Ok(await _vendors.AddRateAsync(id, req.Amount, req.EffectiveFrom, req.EffectiveTo));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
+
     [HttpDelete("api/vendors/{id}")]
     public async Task<IActionResult> Delete(string id)
     {

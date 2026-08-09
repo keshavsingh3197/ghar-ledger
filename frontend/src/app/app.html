@@ -4,6 +4,7 @@
     @if (auth.isAuthenticated()) {
       <div class="user-chip">
         <span class="user-name">{{ auth.user()?.displayName }}</span>
+        <a class="chip-btn" routerLink="/settings" title="Profile and settings" aria-label="Profile and settings">⚙</a>
         <button class="chip-btn" type="button" (click)="logout()" title="Sign out">⏻</button>
       </div>
     }

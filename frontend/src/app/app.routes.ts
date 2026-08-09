@@ -14,5 +14,11 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./features/household/household.component').then((m) => m.HouseholdComponent),
   },
+  {
+    path: 'settings',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./features/settings/settings.component').then((m) => m.SettingsComponent),
+  },
   { path: '**', redirectTo: '' },
 ];

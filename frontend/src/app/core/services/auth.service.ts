@@ -17,6 +17,7 @@ export class AuthService {
 
   private accessToken = signal<string | null>(null);
   readonly user = signal<UserProfile | null>(null);
+  readonly sessionExpiresAt = signal<string | null>(null);
   readonly isAuthenticated = computed(() => !!this.user() && !!this.accessToken());
 
   token(): string | null {
@@ -55,10 +56,12 @@ export class AuthService {
   private setSession(session: SsoSession): void {
     this.accessToken.set(session.accessToken);
     this.user.set(session.user);
+    this.sessionExpiresAt.set(session.accessTokenExpiresAt);
   }
 
   private clearSession(): void {
     this.accessToken.set(null);
     this.user.set(null);
+    this.sessionExpiresAt.set(null);
   }
 }

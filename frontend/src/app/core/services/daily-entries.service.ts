@@ -23,6 +23,12 @@ export class DailyEntriesService {
       `${this.baseUrl}/households/${householdId}/entries/monthly-totals${q}`);
   }
 
+  rangeTotals(householdId: string, from: Date, to: Date): Observable<MonthlyVendorTotal[]> {
+    const q = `?from=${from.toISOString()}&to=${to.toISOString()}`;
+    return this.http.get<MonthlyVendorTotal[]>(
+      `${this.baseUrl}/households/${householdId}/entries/range-totals${q}`);
+  }
+
   create(householdId: string, req: CreateDailyEntryRequest): Observable<DailyEntry> {
     return this.http.post<DailyEntry>(`${this.baseUrl}/households/${householdId}/entries`, req);
   }

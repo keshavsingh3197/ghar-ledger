@@ -40,6 +40,15 @@ public class DailyEntriesController : ControllerBase
         return Ok(await _entries.MonthlyTotalsAsync(householdId, from, to));
     }
 
+    [HttpGet("api/households/{householdId}/entries/range-totals")]
+    public async Task<ActionResult<List<MonthlyVendorTotal>>> RangeTotals(
+        string householdId, [FromQuery] DateTime from, [FromQuery] DateTime to)
+    {
+        if (!await _households.IsMemberAsync(householdId, User.GetUserId())) return NotFound();
+        if (to <= from) return BadRequest("To must be after from.");
+        return Ok(await _entries.MonthlyTotalsAsync(householdId, from, to));
+    }
+
     [HttpPost("api/households/{householdId}/entries")]
     public async Task<ActionResult<DailyEntry>> Create(string householdId, [FromBody] CreateDailyEntryRequest req)
     {
