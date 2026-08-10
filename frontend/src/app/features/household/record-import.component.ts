@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, EventEmitter, Input, Output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CreateHouseholdTransactionRequest, HouseholdTransactionType } from '../../core/models/household-transaction.models';
+import { downloadSpreadsheet, readSpreadsheet } from '../../core/spreadsheet';
 
 export interface PendingLedgerRecord extends CreateHouseholdTransactionRequest {
   selected: boolean;
@@ -95,12 +96,11 @@ export class RecordImportComponent {
 
   async downloadExcelTemplate(): Promise<void> {
     this.feedback.emit({ message: 'Preparing Excel import format…', kind: 'info' });
-    const XLSX = await import('xlsx');
-    const workbook = XLSX.utils.book_new();
-    const worksheet = XLSX.utils.json_to_sheet(this.templateRows());
-    worksheet['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 20 }, { wch: 12 }, { wch: 18 }, { wch: 36 }];
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Records');
-    XLSX.writeFile(workbook, 'ghar-ledger-import-template.xlsx');
+    await downloadSpreadsheet([{
+      name: 'Records',
+      rows: this.templateRows(),
+      columnWidths: [20, 12, 20, 12, 18, 36],
+    }], 'ghar-ledger-import-template.xlsx');
     this.feedback.emit({ message: 'Excel import format downloaded.', kind: 'success' });
   }
 
@@ -162,9 +162,7 @@ export class RecordImportComponent {
 
   private async readWorkbook(file: File): Promise<void> {
     this.progress.set('Reading spreadsheet...');
-    const XLSX = await import('xlsx');
-    const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[workbook.SheetNames[0]], { defval: '' });
+    const rows = await readSpreadsheet(file);
     const pending = rows.map((row) => {
       const date = new Date((row['Date'] || row['date']) as string | number | Date);
       const amount = Number(row['Amount'] || row['amount']);

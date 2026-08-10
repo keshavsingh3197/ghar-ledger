@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { BrandBarChartComponent, BrandBarChartPoint, BrandPaginationComponent } from '@keshavsingh3197/web-ui';
 import { finalize, forkJoin } from 'rxjs';
+import { downloadSpreadsheet, readSpreadsheet } from '../../core/spreadsheet';
 import { DailyEntry, DeliveryPeriod, MonthlyVendorTotal } from '../../core/models/daily-entry.models';
 import { Household } from '../../core/models/household.models';
 import { CreateHouseholdTransactionRequest, HouseholdCashflowSummary, HouseholdTransaction, HouseholdTransactionType } from '../../core/models/household-transaction.models';
@@ -434,17 +435,16 @@ export class HouseholdComponent implements OnInit {
     this.actionBusy.set('export-all');
     this.notify('Preparing the complete workbook…', 'info');
     try {
-      const XLSX = await import('xlsx');
-      const workbook = XLSX.utils.book_new();
       const cashflow = this.cashflowActivity().map((item) => ({ Date: new Date(item.date).toLocaleString(), Type: item.type, Category: item.category, Amount: item.amount, Member: item.memberName ?? '', Note: item.note ?? '' }));
       const deliveries = this.monthEntries().map((entry) => ({ Date: new Date(entry.date).toLocaleString(), Period: entry.period, Vendor: this.vendorName(entry.vendorId), Quantity: entry.quantity, Rate: entry.ratePerUnit, Amount: entry.amount, Note: entry.note ?? '' }));
       const vendors = this.vendors().flatMap((vendor) => vendor.rates.length
         ? vendor.rates.map((rate) => ({ Vendor: vendor.name, Unit: vendor.unit, Rate: rate.amount, From: rate.effectiveFrom, To: rate.effectiveTo ?? '', Active: vendor.isActive }))
         : [{ Vendor: vendor.name, Unit: vendor.unit, Rate: vendor.ratePerUnit, From: '', To: '', Active: vendor.isActive }]);
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(cashflow), 'Family cashflow');
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(deliveries), 'Deliveries');
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(vendors), 'Vendors and prices');
-      XLSX.writeFile(workbook, `ghar-ledger-records-${this.reportFrom}-to-${this.reportTo}.xlsx`);
+      await downloadSpreadsheet([
+        { name: 'Family cashflow', rows: cashflow },
+        { name: 'Deliveries', rows: deliveries },
+        { name: 'Vendors and prices', rows: vendors },
+      ], `ghar-ledger-records-${this.reportFrom}-to-${this.reportTo}.xlsx`);
       this.notify('Complete workbook downloaded.');
     } catch {
       this.notify('The workbook could not be created.', 'error');
@@ -467,11 +467,8 @@ export class HouseholdComponent implements OnInit {
     this.actionBusy.set('delivery-export');
     this.notify('Preparing delivery export…', 'info');
     try {
-      const XLSX = await import('xlsx');
       const rows = this.monthEntries().map((entry) => ({ Date: new Date(entry.date).toLocaleString(), Period: entry.period, Vendor: this.vendorName(entry.vendorId), Quantity: entry.quantity, Rate: entry.ratePerUnit, Amount: entry.amount, Paid: entry.paidAmount, Balance: entry.amount - entry.paidAmount, Note: entry.note ?? '' }));
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), 'Entries');
-      XLSX.writeFile(workbook, `ghar-ledger-${this.selectedMonth}.xlsx`);
+      await downloadSpreadsheet([{ name: 'Entries', rows }], `ghar-ledger-${this.selectedMonth}.xlsx`);
       this.notify('Delivery export downloaded.');
     } catch { this.notify('Delivery export could not be created.', 'error'); }
     finally { this.actionBusy.set(''); }
@@ -481,13 +478,8 @@ export class HouseholdComponent implements OnInit {
     this.actionBusy.set('delivery-template');
     this.notify('Preparing delivery import format…', 'info');
     try {
-      const XLSX = await import('xlsx');
       const rows = [{ Vendor: 'Milk vendor', Date: '2026-08-09 07:30', Quantity: 1, Rate: 60, Period: 'Morning', Note: 'Daily milk' }];
-      const workbook = XLSX.utils.book_new();
-      const worksheet = XLSX.utils.json_to_sheet(rows);
-      worksheet['!cols'] = [{ wch: 22 }, { wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 30 }];
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Deliveries');
-      XLSX.writeFile(workbook, 'ghar-ledger-delivery-import-template.xlsx');
+      await downloadSpreadsheet([{ name: 'Deliveries', rows, columnWidths: [22, 20, 12, 12, 12, 30] }], 'ghar-ledger-delivery-import-template.xlsx');
       this.notify('Delivery import format downloaded.');
     } catch { this.notify('Delivery format could not be created.', 'error'); }
     finally { this.actionBusy.set(''); }
@@ -499,9 +491,7 @@ export class HouseholdComponent implements OnInit {
     if (!file) return;
     this.actionBusy.set('delivery-import');
     this.notify(`Reading ${file.name}…`, 'info');
-    const XLSX = await import('xlsx');
-    const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[workbook.SheetNames[0]], { defval: '' });
+    const rows = await readSpreadsheet(file);
     const requests = rows.map((row) => {
       const vendor = this.vendors().find((item) => item.name.trim().toLowerCase() === String(row['Vendor']).trim().toLowerCase());
       const quantity = Number(row['Quantity']);
