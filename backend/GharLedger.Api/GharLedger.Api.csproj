@@ -23,10 +23,10 @@
     <!-- Shared JWT options + Mongo access from GitHub Packages. This app is a pure resource server —
          it validates tokens the identity provider (admin.keshavsingh.in) issues, it never mints them,
          so it does NOT need KeshavSingh.Auth's login engine (AddKeshavAuthEngine). -->
-    <PackageReference Include="KeshavSingh.Security" Version="0.5.0" />
-    <PackageReference Include="KeshavSingh.Auth" Version="0.7.0" />
-    <PackageReference Include="KeshavSingh.Core" Version="0.5.0" />
-    <PackageReference Include="KeshavSingh.Mongo.NoSql" Version="0.3.0" />
+    <PackageReference Include="KeshavSingh.Security" Version="0.6.0" />
+    <PackageReference Include="KeshavSingh.Auth" Version="0.10.0" />
+    <PackageReference Include="KeshavSingh.Core" Version="0.6.0" />
+    <PackageReference Include="KeshavSingh.Mongo.NoSql" Version="0.4.0" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(SkipPrivatePackages)' == 'true'">
