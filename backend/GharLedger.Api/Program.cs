@@ -33,10 +33,14 @@ builder.Services
     .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(
         new System.Text.Json.Serialization.JsonStringEnumConverter()));
 
-// ---- CORS: the SSO family — any keshavsingh.in subdomain over https, plus localhost in dev.
+// ---- CORS: the SSO family — any keshavsingh.in subdomain over https, plus localhost in Development only.
 // Credentialed, so this is a scoped predicate allowlist (never AllowAnyOrigin). ----
 const string CorsPolicy = "GharLedgerCors";
-builder.Services.AddKeshavSsoCors(CorsPolicy);
+// localhost is now dev-only (KeshavSingh.Core 0.6.0): it used to be trusted in production
+// too, where it bought nothing and left http://localhost:* as a credentialed origin.
+builder.Services.AddKeshavSsoCors(
+    CorsPolicy,
+    allowLocalhost: builder.Environment.IsDevelopment());
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
