@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, EventEmitter, Input, Output, signal
 import { FormsModule } from '@angular/forms';
 import { CreateHouseholdTransactionRequest, HouseholdTransactionType } from '../../core/models/household-transaction.models';
 import { downloadSpreadsheet, readSpreadsheet } from '../../core/spreadsheet';
+import { LoadingStateComponent } from '../../shared/loading-state.component';
 
 export interface PendingLedgerRecord extends CreateHouseholdTransactionRequest {
   selected: boolean;
@@ -21,10 +22,10 @@ const categoryKeywords: Record<string, string[]> = {
 @Component({
   selector: 'app-record-import',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule],
+  imports: [FormsModule, LoadingStateComponent],
   template: `
     <section class="importer">
-      @if (!hasRecords) {
+      @if (!loading && !hasRecords) {
         <div class="starter">
           <strong>Start your family diary</strong>
           <p>No records yet. Add one manually, upload a receipt screenshot, or download the format and fill multiple records.</p>
@@ -36,10 +37,10 @@ const categoryKeywords: Record<string, string[]> = {
       </div>
 
       @if (reading()) {
-        <div class="loading" role="status"><span class="spinner"></span><span>{{ progress() }}</span></div>
+        <app-loading-state mode="inline" [compact]="true" [title]="progress() || 'Reading uploaded record…'" />
       }
       @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
-      @if (previewUrl()) { <img class="preview" [src]="previewUrl()" alt="Uploaded record preview" /> }
+      @if (previewUrl()) { <img class="preview" [src]="previewUrl()" alt="Uploaded record preview" loading="lazy" decoding="async" /> }
 
       @if (pending().length) {
         <div class="review" role="region" aria-label="Review imported records">
@@ -70,6 +71,7 @@ const categoryKeywords: Record<string, string[]> = {
 })
 export class RecordImportComponent {
   @Input() hasRecords = false;
+  @Input() loading = false;
   @Output() recordsConfirmed = new EventEmitter<CreateHouseholdTransactionRequest[]>();
   @Output() feedback = new EventEmitter<{ message: string; kind: 'success' | 'error' | 'info' }>();
 
