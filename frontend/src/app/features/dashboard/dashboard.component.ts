@@ -3,11 +3,12 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { HouseholdsService } from '../../core/services/households.service';
 import { Household } from '../../core/models/household.models';
+import { LoadingStateComponent } from '../../shared/loading-state.component';
 
 @Component({
   selector: 'app-dashboard',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule],
+  imports: [FormsModule, LoadingStateComponent],
   template: `
     <div class="dashboard">
       <header class="head">
@@ -18,7 +19,7 @@ import { Household } from '../../core/models/household.models';
       </header>
 
       @if (loading()) {
-        <p class="loading">Loading…</p>
+        <app-loading-state mode="cards" [count]="3" title="Loading households…" subtitle="Connecting to your family ledgers…" />
       } @else if (households().length === 0) {
         <p class="empty">No households yet — create your first one below.</p>
       } @else {
@@ -36,7 +37,7 @@ import { Household } from '../../core/models/household.models';
         <label class="field"><span>New household name</span>
           <input class="input" placeholder="e.g. Sharma Family" [(ngModel)]="newName" />
         </label>
-        <button class="btn-primary" type="button" [disabled]="!newName.trim() || creating()" (click)="create()">
+        <button class="btn-primary" [class.btn-spin]="creating()" type="button" [disabled]="!newName.trim() || creating()" (click)="create()">
           {{ creating() ? 'Creating…' : '+ Create household' }}
         </button>
       </div>

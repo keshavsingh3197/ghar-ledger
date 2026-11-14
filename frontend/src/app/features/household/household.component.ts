@@ -16,6 +16,7 @@ import { HouseholdTransactionsService } from '../../core/services/household-tran
 import { PreferencesService } from '../../core/services/preferences.service';
 import { VendorPaymentsService } from '../../core/services/vendor-payments.service';
 import { VendorsService } from '../../core/services/vendors.service';
+import { LoadingStateComponent } from '../../shared/loading-state.component';
 import { RecordImportComponent } from './record-import.component';
 
 function localDateTime(date = new Date()): string {
@@ -36,7 +37,7 @@ interface CashflowActivity {
 @Component({
   selector: 'app-household',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [BrandBarChartComponent, BrandPaginationComponent, CurrencyPipe, DatePipe, FormsModule, RecordImportComponent, RouterLink],
+  imports: [BrandBarChartComponent, BrandPaginationComponent, CurrencyPipe, DatePipe, FormsModule, LoadingStateComponent, RecordImportComponent, RouterLink],
   template: `
     <div class="household">
       <header>
@@ -58,7 +59,7 @@ interface CashflowActivity {
             <label>To (included)<input class="input" type="date" [(ngModel)]="reportTo" (change)="loadReport()" /></label>
           </div>
         </section>
-        @if (reportLoading() && !monthlyTotals().length) { <div class="loading" role="status"><span class="spinner"></span><span>Loading report…</span></div> }
+        @if (reportLoading() && !monthlyTotals().length) { <app-loading-state mode="cards" [count]="4" title="Loading report…" subtitle="Computing vendor charges, payments &amp; family cashflow…" /> }
         <section class="metrics">
           <article><span>Vendor charges</span><strong>{{ grandTotal() | currency:currencyCode() }}</strong></article>
           <article><span>Family income</span><strong>{{ cashflowSummary().income | currency:currencyCode() }}</strong></article>
@@ -67,7 +68,7 @@ interface CashflowActivity {
         </section>
         <section class="panel">
           <div class="heading"><div><h2>Spend by vendor</h2><p>{{ reportFrom }} to {{ reportTo }}, inclusive</p></div></div>
-          @if (!monthlyTotals().length) { <p class="empty">No vendor activity for this period.</p> }
+          @if (!reportLoading() && !monthlyTotals().length) { <p class="empty">No vendor activity for this period.</p> }
           @if (monthlyTotals().length) { <brand-bar-chart [points]="vendorChartPoints()" /> }
           @if (monthlyTotals().length) {
             <div class="scroll"><table><thead><tr><th>Vendor</th><th>Deliveries</th><th>Quantity</th><th>Charged</th><th>Paid</th><th>Balance</th></tr></thead><tbody>
@@ -79,8 +80,8 @@ interface CashflowActivity {
 
       @if (activeTab() === 'cashflow') {
         <section class="panel">
-          <div class="heading"><div><h2>Family cashflow</h2><p>Income, daily spending, and vendor payments for {{ reportFrom }} to {{ reportTo }}.</p></div><button class="secondary" type="button" [disabled]="!cashflowActivity().length || actionBusy() === 'export-all'" (click)="exportAllRecords()">{{ actionBusy() === 'export-all' ? 'Exporting…' : 'Export all' }}</button></div>
-          @if (reportLoading() && !cashflowActivity().length) { <div class="loading" role="status"><span class="spinner"></span><span>Loading family diary…</span></div> }
+          <div class="heading"><div><h2>Family cashflow</h2><p>Income, daily spending, and vendor payments for {{ reportFrom }} to {{ reportTo }}.</p></div><button class="secondary" [class.btn-spin]="actionBusy() === 'export-all'" type="button" [disabled]="!cashflowActivity().length || actionBusy() === 'export-all'" (click)="exportAllRecords()">{{ actionBusy() === 'export-all' ? 'Exporting…' : 'Export all' }}</button></div>
+          @if (reportLoading() && !cashflowActivity().length) { <app-loading-state mode="table" [count]="4" title="Loading family diary…" /> }
           <section class="metrics cashflow-metrics"><article><span>Income</span><strong>{{ cashflowSummary().income | currency:currencyCode() }}</strong></article><article><span>Daily expenses</span><strong>{{ cashflowSummary().expenses | currency:currencyCode() }}</strong></article><article><span>Paid to vendors</span><strong>{{ vendorPaymentsTotal() | currency:currencyCode() }}</strong></article><article><span>Net cash left</span><strong>{{ netCashLeft() | currency:currencyCode() }}</strong></article></section>
           <section class="chart-panel"><h3>Cash movement</h3><brand-bar-chart [points]="cashflowChartPoints()" /></section>
           <p class="accrual">Accrued left after all vendor charges: <strong>{{ accruedLeft() | currency:currencyCode() }}</strong>. Outstanding vendor bills: <strong>{{ outstandingTotal() | currency:currencyCode() }}</strong>.</p>
@@ -93,9 +94,9 @@ interface CashflowActivity {
             <label>Family member<input class="input" [(ngModel)]="transactionMember" placeholder="Optional" /></label>
             <label>Note<input class="input" [(ngModel)]="transactionNote" placeholder="Optional" /></label>
           </div>
-          <button class="primary" [disabled]="!transactionCategory.trim() || !transactionAmount || actionBusy() === 'transaction'" (click)="addTransaction()">{{ actionBusy() === 'transaction' ? 'Adding record…' : 'Add record' }}</button>
-          <app-record-import [hasRecords]="cashflowActivity().length > 0" (recordsConfirmed)="importCashflowRecords($event)" (feedback)="notify($event.message, $event.kind)" />
-          @if (savingImport()) { <div class="loading" role="status"><span class="spinner"></span><span>Saving confirmed records…</span></div> }
+          <button class="primary" [class.btn-spin]="actionBusy() === 'transaction'" [disabled]="!transactionCategory.trim() || !transactionAmount || actionBusy() === 'transaction'" (click)="addTransaction()">{{ actionBusy() === 'transaction' ? 'Adding record…' : 'Add record' }}</button>
+          <app-record-import [hasRecords]="cashflowActivity().length > 0" [loading]="reportLoading()" (recordsConfirmed)="importCashflowRecords($event)" (feedback)="notify($event.message, $event.kind)" />
+          @if (savingImport()) { <app-loading-state mode="inline" [compact]="true" title="Saving confirmed records…" /> }
         </section>
         <section class="panel">
           <div class="heading"><div><h2>Family diary</h2><p>{{ cashflowActivity().length }} records, including vendor payments</p></div></div>
@@ -108,7 +109,8 @@ interface CashflowActivity {
       @if (activeTab() === 'entries') {
         <section class="panel">
           <div class="heading"><div><h2>Add delivery</h2><p>The selected rate is saved with this delivery.</p></div></div>
-          @if (!activeVendors().length) { <p class="empty">Add an active vendor first.</p> } @else {
+          @if (vendorsLoading() && !vendors().length) { <app-loading-state mode="inline" [compact]="true" title="Loading vendors…" /> }
+          @else if (!activeVendors().length) { <p class="empty">Add an active vendor first.</p> } @else {
             <div class="form-grid">
               <label>Vendor<select class="input" [(ngModel)]="logVendorId" (change)="useVendorRate()">@for (vendor of activeVendors(); track vendor.id) { <option [value]="vendor.id">{{ vendor.name }}</option> }</select></label>
               <label>Date and time<input class="input" type="datetime-local" [(ngModel)]="logDate" /></label>
@@ -116,12 +118,12 @@ interface CashflowActivity {
               <label>Quantity<input class="input" type="number" min="0.01" step="0.01" [(ngModel)]="logQuantity" /></label>
               <label>Note<input class="input" [(ngModel)]="logNote" placeholder="Optional" /></label>
             </div>
-            <button class="primary" [disabled]="!canLog() || actionBusy() === 'delivery'" (click)="logEntry()">{{ actionBusy() === 'delivery' ? 'Adding delivery…' : 'Add delivery' }}</button>
+            <button class="primary" [class.btn-spin]="actionBusy() === 'delivery'" [disabled]="!canLog() || actionBusy() === 'delivery'" (click)="logEntry()">{{ actionBusy() === 'delivery' ? 'Adding delivery…' : 'Add delivery' }}</button>
           }
         </section>
         <section class="panel">
-          <div class="heading"><div><h2>{{ monthLabel() }} entries</h2><p>{{ monthEntries().length }} delivery records</p></div><div class="actions"><input #fileInput hidden type="file" accept=".xlsx,.xls,.csv" (change)="importWorkbook($event)" /><button class="secondary" type="button" [disabled]="actionBusy() === 'delivery-template'" (click)="downloadDeliveryTemplate()">{{ actionBusy() === 'delivery-template' ? 'Preparing…' : 'Download format' }}</button><button class="secondary" [disabled]="actionBusy() === 'delivery-import'" (click)="fileInput.click()">{{ actionBusy() === 'delivery-import' ? 'Importing…' : 'Import Excel' }}</button><button class="secondary" [disabled]="!monthEntries().length || actionBusy() === 'delivery-export'" (click)="exportWorkbook()">{{ actionBusy() === 'delivery-export' ? 'Exporting…' : 'Export Excel' }}</button></div></div>
-          @if (monthLoading() && !monthEntries().length) { <div class="loading" role="status"><span class="spinner"></span><span>Loading deliveries…</span></div> }
+          <div class="heading"><div><h2>{{ monthLabel() }} entries</h2><p>{{ monthEntries().length }} delivery records</p></div><div class="actions"><input #fileInput hidden type="file" accept=".xlsx,.xls,.csv" (change)="importWorkbook($event)" /><button class="secondary" [class.btn-spin]="actionBusy() === 'delivery-template'" type="button" [disabled]="actionBusy() === 'delivery-template'" (click)="downloadDeliveryTemplate()">{{ actionBusy() === 'delivery-template' ? 'Preparing…' : 'Download format' }}</button><button class="secondary" [class.btn-spin]="actionBusy() === 'delivery-import'" [disabled]="actionBusy() === 'delivery-import'" (click)="fileInput.click()">{{ actionBusy() === 'delivery-import' ? 'Importing…' : 'Import Excel' }}</button><button class="secondary" [class.btn-spin]="actionBusy() === 'delivery-export'" [disabled]="!monthEntries().length || actionBusy() === 'delivery-export'" (click)="exportWorkbook()">{{ actionBusy() === 'delivery-export' ? 'Exporting…' : 'Export Excel' }}</button></div></div>
+          @if (monthLoading() && !monthEntries().length) { <app-loading-state mode="table" [count]="5" title="Loading deliveries…" /> }
           @if (!monthLoading() && !monthEntries().length) { <p class="empty">No deliveries for this month.</p> }
           @if (monthEntries().length) { <div class="scroll"><table><thead><tr><th>Date</th><th>Period</th><th>Vendor</th><th>Qty</th><th>Captured rate</th><th>Charged</th><th>Note</th><th></th></tr></thead><tbody>
             @for (entry of pagedEntries(); track entry.id) {
@@ -141,7 +143,7 @@ interface CashflowActivity {
       @if (activeTab() === 'vendors') {
         <section class="panel">
           <div class="heading"><div><h2>Vendors</h2><p>Prices use inclusive start and end dates.</p></div></div>
-          @if (vendorsLoading() && !vendors().length) { <div class="loading" role="status"><span class="spinner"></span><span>Loading vendors…</span></div> }
+          @if (vendorsLoading() && !vendors().length) { <app-loading-state mode="list" [count]="3" title="Loading vendors…" /> }
           @if (!vendorsLoading() && !vendors().length) { <p class="empty">No vendors yet.</p> }
           @for (vendor of vendors(); track vendor.id) {
             <div class="vendor" [class.inactive]="!vendor.isActive">
@@ -154,18 +156,24 @@ interface CashflowActivity {
             @if (vendor.rates.length) { <div class="rate-list">@for (rate of vendor.rates; track rate.id) { <span>{{ rate.amount | currency:currencyCode() }}: {{ rate.effectiveFrom | date:'mediumDate' }} to {{ rate.effectiveTo ? (rate.effectiveTo | date:'mediumDate') : 'ongoing' }}</span> }</div> }
           }
           <div class="form-grid add-vendor"><label>Name<input class="input" [(ngModel)]="newVendor.name" placeholder="Milk vendor" /></label><label>Unit<input class="input" [(ngModel)]="newVendor.unit" /></label><label>Rate per unit<input class="input" type="number" min="0" [(ngModel)]="newVendor.ratePerUnit" /></label></div>
-          <button class="primary" [disabled]="!newVendor.name.trim() || actionBusy() === 'vendor'" (click)="addVendor()">{{ actionBusy() === 'vendor' ? 'Adding vendor…' : 'Add vendor' }}</button>
+          <button class="primary" [class.btn-spin]="actionBusy() === 'vendor'" [disabled]="!newVendor.name.trim() || actionBusy() === 'vendor'" (click)="addVendor()">{{ actionBusy() === 'vendor' ? 'Adding vendor…' : 'Add vendor' }}</button>
         </section>
         <section class="panel">
           <div class="heading"><div><h2>Add vendor price</h2><p>Leave the end date empty for an ongoing price.</p></div></div>
           <div class="form-grid"><label>Vendor<select class="input" [(ngModel)]="rateVendorId">@for (vendor of vendors(); track vendor.id) { <option [value]="vendor.id">{{ vendor.name }}</option> }</select></label><label>Price per unit<input class="input" type="number" min="0" step="0.01" [(ngModel)]="newRate.amount" /></label><label>From<input class="input" type="date" [(ngModel)]="newRate.effectiveFrom" /></label><label>To (included)<input class="input" type="date" [(ngModel)]="newRate.effectiveTo" /></label></div>
-          <button class="primary" [disabled]="!rateVendorId || newRate.amount < 0 || !newRate.effectiveFrom || actionBusy() === 'rate'" (click)="addRate()">{{ actionBusy() === 'rate' ? 'Adding price…' : 'Add price' }}</button>
+          <button class="primary" [class.btn-spin]="actionBusy() === 'rate'" [disabled]="!rateVendorId || newRate.amount < 0 || !newRate.effectiveFrom || actionBusy() === 'rate'" (click)="addRate()">{{ actionBusy() === 'rate' ? 'Adding price…' : 'Add price' }}</button>
         </section>
         <section class="panel">
           <div class="heading"><div><h2>Vendor payments</h2><p>Record money separately from deliveries, with the exact date and time.</p></div></div>
           <div class="form-grid"><label>Vendor<select class="input" [(ngModel)]="paymentVendorId">@for (vendor of vendors(); track vendor.id) { <option [value]="vendor.id">{{ vendor.name }}</option> }</select></label><label>Date and time<input class="input" type="datetime-local" [(ngModel)]="paymentDate" /></label><label>Amount<input class="input" type="number" min="0.01" step="0.01" [(ngModel)]="paymentAmount" /></label><label>Note<input class="input" [(ngModel)]="paymentNote" placeholder="Optional" /></label></div>
-          <button class="primary" [disabled]="!paymentVendorId || !paymentDate || !paymentAmount || actionBusy() === 'payment'" (click)="addPayment()">{{ actionBusy() === 'payment' ? 'Recording payment…' : 'Record payment' }}</button>
-          <div class="scroll payment-list"><table><thead><tr><th>Date</th><th>Vendor</th><th>Paid</th><th>Note</th><th></th></tr></thead><tbody>@for (payment of vendorPayments(); track payment.id) { <tr><td>{{ payment.date | date:'medium' }}</td><td>{{ vendorName(payment.vendorId) }}</td><td>{{ payment.amount | currency:currencyCode() }}</td><td>{{ payment.note || '—' }}</td><td><button class="icon danger" title="Delete payment" (click)="deletePayment(payment)">×</button></td></tr> }</tbody></table></div>
+          <button class="primary" [class.btn-spin]="actionBusy() === 'payment'" [disabled]="!paymentVendorId || !paymentDate || !paymentAmount || actionBusy() === 'payment'" (click)="addPayment()">{{ actionBusy() === 'payment' ? 'Recording payment…' : 'Record payment' }}</button>
+          @if (reportLoading() && !vendorPayments().length) {
+            <app-loading-state mode="table" [count]="3" title="Loading vendor payments…" />
+          } @else if (!vendorPayments().length) {
+            <p class="empty">No vendor payments recorded for this period.</p>
+          } @else {
+            <div class="scroll payment-list"><table><thead><tr><th>Date</th><th>Vendor</th><th>Paid</th><th>Note</th><th></th></tr></thead><tbody>@for (payment of vendorPayments(); track payment.id) { <tr><td>{{ payment.date | date:'medium' }}</td><td>{{ vendorName(payment.vendorId) }}</td><td>{{ payment.amount | currency:currencyCode() }}</td><td>{{ payment.note || '—' }}</td><td><button class="icon danger" title="Delete payment" (click)="deletePayment(payment)">×</button></td></tr> }</tbody></table></div>
+          }
         </section>
       }
     </div>

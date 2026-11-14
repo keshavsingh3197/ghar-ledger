@@ -45,3 +45,28 @@ body {
 }
 
 a { color: var(--brand); }
+
+.btn-spin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .45rem;
+}
+.btn-spin::before {
+  content: '';
+  width: .85em;
+  height: .85em;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  display: inline-block;
+  flex-shrink: 0;
+  animation: glSpin .7s linear infinite;
+}
+
+@keyframes glSpin { to { transform: rotate(360deg); } }
+
+@keyframes glShimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

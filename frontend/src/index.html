@@ -6,8 +6,61 @@
   <base href="/">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <script>
+    try {
+      var prefs = JSON.parse(localStorage.getItem('ghar-ledger.preferences') || '{}');
+      if (prefs && prefs.theme) document.documentElement.dataset.theme = prefs.theme;
+    } catch (_) {}
+  </script>
+  <style>
+    #boot-loader {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      background: #f4f7fb;
+      color: #1d2735;
+      font-family: 'Segoe UI', 'Inter', system-ui, -apple-system, sans-serif;
+      transition: opacity .22s ease;
+    }
+    :root[data-theme='dark'] #boot-loader { background: #111820; color: #edf2f7; }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme='light']) #boot-loader { background: #111820; color: #edf2f7; }
+    }
+    #boot-loader .boot-ring {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 3px solid rgba(26, 115, 232, .2);
+      border-top-color: #1a73e8;
+      animation: bootSpin .8s linear infinite;
+    }
+    :root[data-theme='dark'] #boot-loader .boot-ring {
+      border-color: rgba(32, 122, 107, .24);
+      border-top-color: #207a6b;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme='light']) #boot-loader .boot-ring {
+        border-color: rgba(32, 122, 107, .24);
+        border-top-color: #207a6b;
+      }
+    }
+    #boot-loader .boot-title { font-size: 1rem; font-weight: 600; letter-spacing: -.01em; }
+    #boot-loader .boot-sub { font-size: .82rem; opacity: .72; }
+    @keyframes bootSpin { to { transform: rotate(360deg); } }
+  </style>
 </head>
 <body>
-  <app-root></app-root>
+  <app-root>
+    <div id="boot-loader" role="status" aria-live="polite" aria-label="Loading Ghar Ledger">
+      <div class="boot-ring" aria-hidden="true"></div>
+      <div class="boot-title">Ghar Ledger</div>
+      <div class="boot-sub">Signing in &amp; connecting to your ledger…</div>
+    </div>
+  </app-root>
 </body>
 </html>
